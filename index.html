@@ -441,5 +441,442 @@
 
   </main>
 
+  <script>
+    // Paleta científica cálida para clases dinámicas
+    const PALETTE = ['#C2410C', '#1D4ED8', '#0F766E', '#B45309', '#4338CA', '#BE123C', '#3F6212'];
+    let classChartInstance = null;
+    const experimentsStore = {};
+
+    // Notificación discreta en esquina inferior derecha (sin usar alert())
+    function notify(message, isError = false) {
+      const toast = document.getElementById('notebook-toast');
+      const msgEl = document.getElementById('toast-message');
+      const dot = document.getElementById('toast-indicator');
+
+      msgEl.textContent = message;
+      dot.className = `mt-1 h-2 w-2 rounded-full shrink-0 ${isError ? 'bg-rose-400' : 'bg-emerald-400'}`;
+      toast.classList.remove('hidden');
+
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 3600);
+    }
+
+    // Cambio de pestañas del flujo de trabajo
+    function setActiveTab(tabName) {
+      const views = {
+        workbench: document.getElementById('view-workbench'),
+        evaluacion: document.getElementById('view-evaluacion'),
+        comparador: document.getElementById('view-comparador'),
+      };
+      const tabs = {
+        workbench: document.getElementById('tab-workbench'),
+        evaluacion: document.getElementById('tab-evaluacion'),
+        comparador: document.getElementById('tab-comparador'),
+      };
+
+      Object.keys(views).forEach((key) => {
+        const active = key === tabName;
+        views[key].classList.toggle('hidden', !active);
+        tabs[key].className = `${active ? 'tab-active' : 'tab-inactive'} px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer`;
+      });
+
+      // Redibujar gráfica de Chart.js si se entra a Evaluación
+      if (tabName === 'evaluacion' && classChartInstance) {
+        setTimeout(() => classChartInstance.resize(), 40);
+      }
+    }
+
+    // Hiperparámetros dinámicos según clasificador
+    function renderHyperparams() {
+      const clf = document.getElementById('classifier').value;
+      const box = document.getElementById('hyperparams-box');
+
+      if (clf === 'logreg') {
+        box.innerHTML = `
+          <div>
+            <label for="param-penalty" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Regularización</label>
+            <select id="param-penalty" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917]">
+              <option value="l2" selected>L2 (Ridge)</option>
+              <option value="l1">L1 (Lasso)</option>
+            </select>
+          </div>
+          <div>
+            <label for="param-c" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Parámetro C</label>
+            <input type="number" id="param-c" value="1.0" step="0.1" min="0.01" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      } else if (clf === 'svm') {
+        box.innerHTML = `
+          <div>
+            <label for="param-kernel" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Kernel</label>
+            <select id="param-kernel" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917]">
+              <option value="linear" selected>Linear</option>
+              <option value="rbf">RBF</option>
+            </select>
+          </div>
+          <div>
+            <label for="param-c" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Parámetro C</label>
+            <input type="number" id="param-c" value="1.0" step="0.1" min="0.01" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      } else if (clf === 'rf') {
+        box.innerHTML = `
+          <div>
+            <label for="param-estimators" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Número de árboles</label>
+            <input type="number" id="param-estimators" value="100" step="10" min="10" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>
+          <div>
+            <label for="param-maxdepth" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Profundidad máxima</label>
+            <input type="number" id="param-maxdepth" placeholder="Sin límite" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      } else if (clf === 'nb') {
+        box.innerHTML = `
+          <div class="sm:col-span-2">
+            <label for="param-alpha" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Suavizado Alpha</label>
+            <input type="number" id="param-alpha" value="1.0" step="0.1" min="0.0" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      }
+    }
+    renderHyperparams();
+
+    // 1. Subir archivo CSV mediante JSON/FormData a /api/upload-csv
+    document.getElementById('csv-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload-csv', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al cargar el CSV.', true);
+          return;
+        }
+
+        const textSel = document.getElementById('text-col');
+        const labelSel = document.getElementById('label-col');
+        textSel.innerHTML = '';
+        labelSel.innerHTML = '';
+
+        data.columns.forEach((col, i) => {
+          textSel.innerHTML += `<option value="${col}" ${i === 0 ? 'selected' : ''}>${col}</option>`;
+          labelSel.innerHTML += `<option value="${col}" ${i === data.columns.length - 1 ? 'selected' : ''}>${col}</option>`;
+        });
+
+        const box = document.getElementById('column-selector-box');
+        box.classList.remove('hidden');
+        box.classList.add('grid');
+
+        notify(`Archivo "${data.filename}" cargado (${data.rows.toLocaleString()} filas).`);
+        inspectDataset();
+      } catch (err) {
+        notify('Error de red al subir el CSV.', true);
+      }
+    });
+
+    // Inspeccionar dataset mediante JSON a /api/inspect-dataset
+    async function inspectDataset() {
+      const payload = {
+        text_col: document.getElementById('text-col').value,
+        label_col: document.getElementById('label-col').value,
+        drop_na: document.getElementById('opt-drop-na').checked,
+        drop_duplicates: document.getElementById('opt-drop-dup').checked
+      };
+
+      try {
+        const res = await fetch('/api/inspect-dataset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al inspeccionar el dataset.', true);
+          return;
+        }
+
+        document.getElementById('dataset-summary').classList.remove('hidden');
+        document.getElementById('stat-clean').textContent = data.total_clean.toLocaleString();
+        document.getElementById('stat-classes').textContent = data.classes.length;
+        document.getElementById('stat-missing').textContent = data.missing_rows.toLocaleString();
+        document.getElementById('stat-duplicates').textContent = data.duplicate_rows.toLocaleString();
+        document.getElementById('pos-backend-badge').textContent = data.pos_backend ? `POS: ${data.pos_backend}` : '';
+
+        const bar = document.getElementById('class-bar');
+        const legend = document.getElementById('class-legend');
+        bar.innerHTML = '';
+        legend.innerHTML = '';
+
+        data.distribution.forEach((item, idx) => {
+          const color = PALETTE[idx % PALETTE.length];
+          bar.innerHTML += `<div style="width:${item.percentage}%; background:${color}" title="${item.label}: ${item.percentage}%"></div>`;
+          legend.innerHTML += `<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-xs inline-block" style="background:${color}"></span><strong>${item.label}:</strong> ${item.count.toLocaleString()} (${item.percentage}%)</span>`;
+        });
+      } catch (err) {
+        notify('Error de comunicación al inspeccionar el dataset.', true);
+      }
+    }
+
+    // 2. Entrenar modelo enviando configuración JSON a /api/train
+    async function trainModel() {
+      const textCol = document.getElementById('text-col').value;
+      const labelCol = document.getElementById('label-col').value;
+      if (!textCol || !labelCol) {
+        notify('Primero sube un CSV y selecciona las columnas de texto y etiqueta.', true);
+        return;
+      }
+
+      const clf = document.getElementById('classifier').value;
+      const params = {};
+
+      if (clf === 'logreg') {
+        params.penalty = document.getElementById('param-penalty').value;
+        params.C = parseFloat(document.getElementById('param-c').value);
+      } else if (clf === 'svm') {
+        params.kernel = document.getElementById('param-kernel').value;
+        params.C = parseFloat(document.getElementById('param-c').value);
+      } else if (clf === 'rf') {
+        params.n_estimators = parseInt(document.getElementById('param-estimators').value, 10);
+        const md = document.getElementById('param-maxdepth').value;
+        if (md) params.max_depth = parseInt(md, 10);
+      } else if (clf === 'nb') {
+        params.alpha = parseFloat(document.getElementById('param-alpha').value);
+      }
+
+      const payload = {
+        text_col: textCol,
+        label_col: labelCol,
+        feature_type: document.getElementById('feature-type').value,
+        ngram_size: parseInt(document.getElementById('ngram-size').value, 10),
+        ngram_mode: document.getElementById('ngram-mode').value,
+        representation: document.getElementById('representation').value,
+        classifier: clf,
+        test_size: parseFloat(document.getElementById('test-size').value),
+        cv_folds: parseInt(document.getElementById('cv-folds').value, 10),
+        drop_na: document.getElementById('opt-drop-na').checked,
+        drop_duplicates: document.getElementById('opt-drop-dup').checked,
+        params
+      };
+
+      const btn = document.getElementById('btn-train');
+      const status = document.getElementById('train-status');
+      btn.disabled = true;
+      btn.textContent = 'Entrenando...';
+      status.textContent = 'Ejecutando pipeline en el servidor...';
+
+      try {
+        const res = await fetch('/api/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Error durante el entrenamiento.');
+
+        experimentsStore[data.id] = data;
+        renderResults(data);
+        addExperimentRow(data);
+
+        status.textContent = `${data.id} listo · ${data.metrics.accuracy}% accuracy`;
+        notify(`Experimento ${data.id} finalizado (Accuracy: ${data.metrics.accuracy}%, F1 Macro: ${data.metrics.f1_macro}%).`);
+        setActiveTab('evaluacion');
+      } catch (err) {
+        notify(err.message, true);
+        status.textContent = 'Error en la ejecución del pipeline.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ejecutar entrenamiento';
+      }
+    }
+
+    // Renderizar métricas, gráfica por clase, matriz de confusión NxN y validación cruzada
+    function renderResults(data) {
+      document.getElementById('eval-title').textContent = `${data.id} · ${data.classifier} (${data.features})`;
+      document.getElementById('eval-split-meta').textContent = `Train: ${data.train_samples} · Test: ${data.test_samples} · F1 Weighted: ${data.metrics.f1_weighted ?? '--'}%`;
+
+      document.getElementById('kpi-acc').textContent = `${data.metrics.accuracy}%`;
+      document.getElementById('kpi-prec').textContent = `${data.metrics.precision_macro}%`;
+      document.getElementById('kpi-rec').textContent = `${data.metrics.recall_macro}%`;
+      document.getElementById('kpi-f1').textContent = `${data.metrics.f1_macro}%`;
+
+      const ctx = document.getElementById('classChart').getContext('2d');
+      if (classChartInstance) classChartInstance.destroy();
+      classChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.per_class.map((c) => c.label),
+          datasets: [
+            { label: 'Precision %', data: data.per_class.map((c) => c.precision), backgroundColor: '#1D4ED8', borderRadius: 4 },
+            { label: 'Recall %', data: data.per_class.map((c) => c.recall), backgroundColor: '#C2410C', borderRadius: 4 },
+            { label: 'F1-Score %', data: data.per_class.map((c) => c.f1), backgroundColor: '#0F766E', borderRadius: 4 }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true, max: 100 }
+          }
+        }
+      });
+
+      let cmHtml = '<table class="mono text-xs border-collapse w-full text-center"><thead><tr><th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5]">Real \\ Pred</th>';
+      data.classes.forEach((c) => {
+        cmHtml += `<th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5] text-[#1C1917]">${c}</th>`;
+      });
+      cmHtml += '</tr></thead><tbody>';
+
+      data.confusion_matrix.forEach((row, i) => {
+        cmHtml += `<tr><th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5] text-left text-[#1C1917]">${data.classes[i]}</th>`;
+        row.forEach((val, j) => {
+          const cellClass = i === j
+            ? 'bg-blue-50 font-bold text-[#1D4ED8]'
+            : 'bg-white text-[#1C1917]';
+          cmHtml += `<td class="p-2 border border-[#E2DDD5] ${cellClass}">${val}</td>`;
+        });
+        cmHtml += '</tr>';
+      });
+      cmHtml += '</tbody></table>';
+      document.getElementById('confusion-matrix-container').innerHTML = cmHtml;
+
+      const cvBox = document.getElementById('cv-container');
+      if (data.cv) {
+        cvBox.innerHTML = `
+          <div class="space-y-3">
+            <div class="flex flex-wrap gap-2">
+              ${data.cv.scores.map((s, idx) => `<span class="font-mono text-xs bg-[#FAF8F5] text-[#1C1917] border border-[#E2DDD5] px-2.5 py-1 rounded-md">Fold ${idx + 1}: <strong>${s}%</strong></span>`).join('')}
+            </div>
+            <div class="font-mono text-xs sm:text-sm pt-3 border-t border-[#E2DDD5] text-[#1C1917]">
+              Promedio: <strong class="text-[#1D4ED8]">${data.cv.mean}%</strong> · Desviación estándar: <strong class="text-[#C2410C]">${data.cv.std} pp</strong>
+            </div>
+          </div>`;
+      } else {
+        cvBox.textContent = 'Validación cruzada desactivada en este experimento.';
+      }
+    }
+
+    // Agregar fila al historial y actualizar selector de modelos para predicción
+    function addExperimentRow(data) {
+      const tbody = document.getElementById('history-tbody');
+      if (data.id === 'EXP-01') tbody.innerHTML = '';
+
+      const cvText = data.cv ? `${data.cv.mean}% (±${data.cv.std})` : 'Sin CV';
+      tbody.innerHTML += `
+        <tr onclick="inspectSavedExperiment('${data.id}')" class="hover:bg-[#FAF8F5] cursor-pointer transition">
+          <td class="px-4 py-3 font-mono font-bold text-[#C2410C]">${data.id}</td>
+          <td class="px-4 py-3 font-medium text-[#1C1917]">${data.classifier}</td>
+          <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${data.features}</td>
+          <td class="px-4 py-3 font-mono font-semibold text-[#1C1917]">${data.metrics.accuracy}%</td>
+          <td class="px-4 py-3 font-mono font-semibold text-[#1D4ED8]">${data.metrics.f1_macro}%</td>
+          <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${cvText}</td>
+        </tr>`;
+
+      const sel = document.getElementById('predict-model-select');
+      sel.innerHTML += `<option value="${data.id}" selected>${data.id} · ${data.classifier} (${data.metrics.accuracy}%)</option>`;
+    }
+
+    function inspectSavedExperiment(expId) {
+      const exp = experimentsStore[expId];
+      if (!exp) return;
+      renderResults(exp);
+      setActiveTab('evaluacion');
+      notify(`Mostrando evaluación de ${expId}.`);
+    }
+
+    // 3. Predicción individual mediante JSON a /api/predict-text
+    async function predictSingleText() {
+      const expId = document.getElementById('predict-model-select').value;
+      const text = document.getElementById('single-text-input').value.trim();
+
+      if (!expId) {
+        notify('Entrena al menos un modelo antes de predecir.', true);
+        return;
+      }
+      if (!text) {
+        notify('Escribe un texto para clasificar.', true);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/predict-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ experiment_id: expId, text })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al predecir el texto.', true);
+          return;
+        }
+
+        const box = document.getElementById('single-pred-result');
+        box.classList.remove('hidden');
+        box.innerHTML = `
+          <div class="flex items-center justify-between text-xs sm:text-sm">
+            <span class="font-mono text-[#57534E]">Modelo: <strong>${data.experiment_id}</strong></span>
+            <span class="font-mono font-bold text-[#C2410C]">Clase predicha: ${data.predicted_class}</span>
+          </div>
+          <div class="space-y-2 pt-2">
+            ${data.probabilities.map((p) => `
+              <div class="flex items-center gap-3 text-xs">
+                <span class="w-28 truncate font-mono font-medium text-[#1C1917]">${p.label}</span>
+                <div class="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden">
+                  <div class="h-full bg-[#1D4ED8]" style="width:${p.probability}%"></div>
+                </div>
+                <span class="font-mono w-14 text-right text-[#1C1917]">${p.probability}%</span>
+              </div>
+            `).join('')}
+          </div>`;
+      } catch (err) {
+        notify('Error de red al predecir el texto.', true);
+      }
+    }
+
+    // 4. Predicción por lotes CSV a /api/predict-csv
+    async function predictBatchCsv() {
+      const expId = document.getElementById('predict-model-select').value;
+      const colName = document.getElementById('batch-col-name').value.trim();
+      const file = document.getElementById('batch-csv-input').files[0];
+
+      if (!expId) {
+        notify('Selecciona un modelo entrenado.', true);
+        return;
+      }
+      if (!colName || !file) {
+        notify('Indica el nombre de la columna de texto y selecciona un CSV.', true);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch(`/api/predict-csv?experiment_id=${encodeURIComponent(expId)}&text_col=${encodeURIComponent(colName)}`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al predecir el CSV.', true);
+          return;
+        }
+
+        let html = `<div class="font-mono text-xs text-[#57534E] mt-3 mb-1.5">Predicciones generadas: ${data.total} filas (mostrando hasta 50)</div>`;
+        html += `<table class="w-full text-xs text-left border border-[#E2DDD5] bg-white"><thead class="bg-[#FAF8F5] font-mono text-[#57534E]"><tr><th class="p-2 border border-[#E2DDD5]">#</th><th class="p-2 border border-[#E2DDD5]">Texto</th><th class="p-2 border border-[#E2DDD5]">Clase predicha</th><th class="p-2 border border-[#E2DDD5]">Confianza</th></tr></thead><tbody>`;
+
+        data.predictions.slice(0, 50).forEach((r) => {
+          html += `<tr><td class="p-2 border border-[#E2DDD5] font-mono">${r.row}</td><td class="p-2 border border-[#E2DDD5] text-[#1C1917]">${r.text}</td><td class="p-2 border border-[#E2DDD5] font-mono font-bold text-[#1D4ED8]">${r.predicted_class}</td><td class="p-2 border border-[#E2DDD5] font-mono">${r.confidence}%</td></tr>`;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById('batch-pred-table').innerHTML = html;
+        notify(`Predicción por lotes completada (${data.total} textos).`);
+      } catch (err) {
+        notify('Error de red al predecir el CSV.', true);
+      }
+    }
+  </script>
 </body>
 </html>
