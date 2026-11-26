@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TextLab — Cuaderno de Experimentación NLP</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'monospace'],
+          },
+          colors: {
+            paper: '#FAF8F5',
+            surface: '#FFFFFF',
+            ink: '#1C1917',
+            muted: '#57534E',
+            line: '#E2DDD5',
+            terracotta: '#C2410C',
+            cobalt: '#1D4ED8',
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    body {
+      background-color: #FAF8F5;
+      color: #1C1917;
+      background-image: radial-gradient(#E2DDD5 0.75px, transparent 0.75px);
+      background-size: 20px 20px;
+    }
+    .font-mono {
+      font-family: 'IBM Plex Mono', monospace;
+    }
+    .tab-active {
+      background-color: #1C1917;
+      color: #FAF8F5;
+      border-color: #1C1917;
+    }
+    .tab-inactive {
+      background-color: #FFFFFF;
+      color: #57534E;
+      border-color: #E2DDD5;
+    }
+    .tab-inactive:hover {
+      color: #1C1917;
+      border-color: #C2410C;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Notificación flotante en pantalla (evita alert() bloqueante) -->
+  <div id="notebook-toast" class="fixed bottom-5 right-5 z-50 hidden max-w-md bg-stone-900 text-stone-50 border border-stone-700 rounded-lg px-4 py-3 shadow-xl text-xs font-mono">
+    <div class="flex items-start gap-2.5">
+      <span id="toast-indicator" class="mt-1 h-2 w-2 rounded-full bg-amber-400 shrink-0"></span>
+      <span id="toast-message" class="leading-relaxed"></span>
+    </div>
+  </div>
+
+  <!-- Barra Superior Compacta con Pestañas de Flujo de Trabajo -->
+  <header class="sticky top-0 z-30 bg-[#FAF8F5]/95 backdrop-blur-sm border-b border-[#E2DDD5]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+
+      <!-- Identidad del cuaderno técnico -->
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-md border border-[#C2410C] bg-[#C2410C]/10 text-[#C2410C] font-mono font-bold text-sm flex items-center justify-center">
+            TL
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h1 class="text-base sm:text-lg font-extrabold tracking-tight text-[#1C1917]">TextLab</h1>
+              <span class="font-mono text-[11px] px-2 py-0.5 rounded border border-[#E2DDD5] bg-white text-[#57534E]">NLP LAB NOTEBOOK</span>
+            </div>
+            <p class="text-xs text-[#57534E]">Clasificación supervisada de textos · JSON REST Pipeline</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 font-mono text-[11px] text-[#57534E] bg-white border border-[#E2DDD5] px-2.5 py-1 rounded-md">
+          <span id="api-dot" class="w-2 h-2 rounded-full bg-emerald-600"></span>
+          <span>API JSON</span>
+        </div>
+      </div>
+
+      <!-- Pestañas de Flujo de Trabajo -->
+      <nav aria-label="Secciones del cuaderno" class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <button id="tab-workbench" type="button" onclick="setActiveTab('workbench')" class="tab-active px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer">
+          Workbench
+        </button>
+        <button id="tab-evaluacion" type="button" onclick="setActiveTab('evaluacion')" class="tab-inactive px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer">
+          Evaluación
+        </button>
+        <button id="tab-comparador" type="button" onclick="setActiveTab('comparador')" class="tab-inactive px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer">
+          Comparador &amp; Predicción
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Cuerpo Principal del Cuaderno -->
+  <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+
+    <!-- ===================================================================== -->
+    <!-- PESTAÑA 1: WORKBENCH (Dataset + Características + Entrenamiento)      -->
+    <!-- ===================================================================== -->
+    <div id="view-workbench" class="space-y-6">
+
+      <!-- Bloque A: Gestión del conjunto de datos -->
+      <section id="sec-dataset" class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 shadow-2xs space-y-5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E2DDD5]">
+          <div>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#C2410C] font-semibold">Módulo 01 · Corpus &amp; Auditoría</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Gestión del conjunto de datos</h2>
+            <p class="text-xs text-[#57534E] mt-0.5">Carga cualquier archivo CSV etiquetado, selecciona columnas de texto y clase, y audita nulos, duplicados y clases.</p>
+          </div>
+
+          <label class="cursor-pointer inline-flex items-center justify-center gap-2 bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-lg transition shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <span>Cargar CSV</span>
+            <input type="file" id="csv-input" accept=".csv" class="hidden" />
+          </label>
+        </div>
+
+        <!-- Selector de columnas e inspección -->
+        <div id="column-selector-box" class="hidden grid-cols-1 md:grid-cols-4 gap-4 items-end bg-[#FAF8F5] border border-[#E2DDD5] rounded-lg p-4">
+          <div>
+            <label for="text-col" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Columna de texto</label>
+            <select id="text-col" class="w-full rounded-lg border border-[#E2DDD5] bg-white px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]"></select>
+          </div>
+
+          <div>
+            <label for="label-col" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Columna de etiqueta</label>
+            <select id="label-col" class="w-full rounded-lg border border-[#E2DDD5] bg-white px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]"></select>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-4 text-xs font-mono text-[#57534E] py-1">
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+              <input id="opt-drop-na" type="checkbox" checked class="rounded border-[#E2DDD5] text-[#C2410C] focus:ring-[#C2410C]" />
+              <span>Filtrar nulos</span>
+            </label>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+              <input id="opt-drop-dup" type="checkbox" checked class="rounded border-[#E2DDD5] text-[#C2410C] focus:ring-[#C2410C]" />
+              <span>Quitar duplicados</span>
+            </label>
+          </div>
+
+          <div>
+            <button type="button" onclick="inspectDataset()" class="w-full bg-[#1C1917] hover:bg-stone-800 text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-lg transition cursor-pointer">
+              Inspeccionar dataset
+            </button>
+          </div>
+        </div>
+
+        <!-- Resumen de auditoría y distribución de clases -->
+        <div id="dataset-summary" class="hidden space-y-4">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-3.5">
+              <span class="font-mono text-[11px] text-[#57534E] block">Muestras útiles</span>
+              <span id="stat-clean" class="font-mono text-xl font-bold text-[#1C1917] mt-0.5 block">0</span>
+            </div>
+            <div class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-3.5">
+              <span class="font-mono text-[11px] text-[#57534E] block">Clases identificadas</span>
+              <span id="stat-classes" class="font-mono text-xl font-bold text-[#1D4ED8] mt-0.5 block">0</span>
+            </div>
+            <div class="rounded-lg border border-amber-200 bg-amber-50/70 p-3.5">
+              <span class="font-mono text-[11px] text-amber-800 block">Filas con faltantes</span>
+              <span id="stat-missing" class="font-mono text-xl font-bold text-amber-900 mt-0.5 block">0</span>
+            </div>
+            <div class="rounded-lg border-rose-200 border bg-rose-50/70 p-3.5">
+              <span class="font-mono text-[11px] text-rose-800 block">Registros duplicados</span>
+              <span id="stat-duplicates" class="font-mono text-xl font-bold text-rose-900 mt-0.5 block">0</span>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-4 space-y-2.5">
+            <div class="flex items-center justify-between text-xs font-mono text-[#57534E]">
+              <span>Distribución empírica de clases</span>
+              <span id="pos-backend-badge" class="text-[11px] text-[#1D4ED8]"></span>
+            </div>
+            <div id="class-bar" class="w-full h-3 rounded-full overflow-hidden flex bg-stone-200"></div>
+            <div id="class-legend" class="flex flex-wrap gap-x-5 gap-y-1.5 pt-1 text-xs font-mono text-[#1C1917]"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Grid Inferior del Workbench: Características (izq) + Modelo (der) -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Bloque B: Extracción de características -->
+        <section id="sec-features" class="lg:col-span-5 bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+          <div class="pb-3 border-b border-[#E2DDD5]">
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8] font-semibold">Módulo 02 · Representación</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Extracción de características</h2>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label for="feature-type" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Tipo de característica</label>
+              <select id="feature-type" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                <option value="ngrams">N-gramas de palabras</option>
+                <option value="pos">Etiquetas POS (Part-of-Speech)</option>
+                <option value="stopwords">Stopwords</option>
+                <option value="content_words">Content words</option>
+              </select>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label for="ngram-size" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Orden n (1, 2, 3)</label>
+                <select id="ngram-size" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="1">1 (Unigramas)</option>
+                  <option value="2" selected>2 (Bigramas)</option>
+                  <option value="3">3 (Trigramas)</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="ngram-mode" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Alcance del n-grama</label>
+                <select id="ngram-mode" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="exact" selected>Exacto (n)</option>
+                  <option value="up_to">Acumulativo (1..n)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label for="representation" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Esquema de ponderación</label>
+              <select id="representation" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                <option value="tfidf" selected>TF-IDF</option>
+                <option value="freq">Frecuencia (Conteo)</option>
+                <option value="binary">Binaria (Presencia)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-[#E2DDD5] text-[11px] font-mono text-[#57534E]">
+            El transformador se ajusta exclusivamente dentro de cada partición de entrenamiento.
+          </div>
+        </section>
+
+        <!-- Bloque C: Configuración y entrenamiento -->
+        <section id="sec-model" class="lg:col-span-7 bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 shadow-2xs flex flex-col justify-between space-y-5">
+          <div class="space-y-4">
+            <div class="pb-3 border-b border-[#E2DDD5]">
+              <span class="font-mono text-[11px] uppercase tracking-wider text-[#C2410C] font-semibold">Módulo 03 · Estimador &amp; Validación</span>
+              <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Configuración y entrenamiento</h2>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div>
+                <label for="classifier" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Clasificador</label>
+                <select id="classifier" onchange="renderHyperparams()" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="logreg">Regresión Logística</option>
+                  <option value="svm">SVM</option>
+                  <option value="rf">Random Forest</option>
+                  <option value="nb">Naive Bayes</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="test-size" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Partición Train / Test</label>
+                <select id="test-size" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="0.2" selected>80% Train / 20% Test</option>
+                  <option value="0.25">75% Train / 25% Test</option>
+                  <option value="0.3">70% Train / 30% Test</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="cv-folds" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">CV Estratificada</label>
+                <select id="cv-folds" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="0">Sin CV</option>
+                  <option value="3">3 folds</option>
+                  <option value="5" selected>5 folds</option>
+                  <option value="10">10 folds</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Contenedor de hiperparámetros dinámicos por clasificador -->
+            <div id="hyperparams-box" class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1"></div>
+          </div>
+
+          <div class="pt-4 border-t border-[#E2DDD5] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span id="train-status" class="font-mono text-xs text-[#57534E]">Esperando ejecución del pipeline...</span>
+            <button id="btn-train" type="button" onclick="trainModel()" class="inline-flex items-center justify-center gap-2 bg-[#1D4ED8] hover:bg-blue-800 text-white font-semibold text-sm px-5 py-2.5 rounded-lg transition cursor-pointer">
+              <span>Ejecutar entrenamiento</span>
+            </button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- PESTAÑA 2: EVALUACIÓN (KPIs + Gráfica por clase + Matriz + CV)       -->
+    <!-- ===================================================================== -->
+    <div id="view-evaluacion" class="hidden space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white border border-[#E2DDD5] rounded-xl px-5 py-4">
+        <div>
+          <span class="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8] font-semibold">Reporte de Desempeño</span>
+          <h2 id="eval-title" class="text-lg font-bold text-[#1C1917]">Resultados del último experimento</h2>
+        </div>
+        <span id="eval-split-meta" class="font-mono text-xs text-[#57534E]">Sin modelo evaluado aún</span>
+      </div>
+
+      <!-- Métricas Globales y Macro -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">Accuracy</span>
+          <div id="kpi-acc" class="font-mono text-2xl font-bold text-[#1C1917] mt-1">--</div>
+        </div>
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">Precision Macro</span>
+          <div id="kpi-prec" class="font-mono text-2xl font-bold text-[#1D4ED8] mt-1">--</div>
+        </div>
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">Recall Macro</span>
+          <div id="kpi-rec" class="font-mono text-2xl font-bold text-[#C2410C] mt-1">--</div>
+        </div>
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">F1-Score Macro</span>
+          <div id="kpi-f1" class="font-mono text-2xl font-bold text-emerald-700 mt-1">--</div>
+        </div>
+      </div>
+
+      <!-- Gráfica de desempeño por clase -->
+      <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-[#1C1917]">Desempeño por clase (Precision / Recall / F1)</h3>
+          <span class="font-mono text-xs text-[#57534E]">% en partición test</span>
+        </div>
+        <div class="h-64">
+          <canvas id="classChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Matriz de Confusión y Validación Cruzada -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-3 overflow-x-auto">
+          <h3 class="text-base font-bold text-[#1C1917]">Matriz de confusión</h3>
+          <div id="confusion-matrix-container" class="font-mono text-xs text-[#57534E]">Entrena un modelo para visualizar la matriz.</div>
+        </section>
+
+        <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-3">
+          <h3 class="text-base font-bold text-[#1C1917]">Validación cruzada estratificada</h3>
+          <div id="cv-container" class="text-xs sm:text-sm text-[#57534E]">Entrena un modelo para ver los scores por fold.</div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- PESTAÑA 3: COMPARADOR & PREDICCIÓN                                    -->
+    <!-- ===================================================================== -->
+    <div id="view-comparador" class="hidden space-y-6">
+
+      <!-- Historial de experimentos -->
+      <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#C2410C] font-semibold">Registro de Sesión</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Comparación de experimentos</h2>
+          </div>
+          <span class="font-mono text-xs text-[#57534E]">Clic en fila para inspeccionar</span>
+        </div>
+
+        <div class="overflow-x-auto border border-[#E2DDD5] rounded-lg">
+          <table class="w-full text-left border-collapse text-xs sm:text-sm">
+            <thead class="bg-[#FAF8F5] border-b border-[#E2DDD5] font-mono text-[11px] uppercase text-[#57534E]">
+              <tr>
+                <th class="px-4 py-3">ID</th>
+                <th class="px-4 py-3">Clasificador</th>
+                <th class="px-4 py-3">Características</th>
+                <th class="px-4 py-3">Accuracy</th>
+                <th class="px-4 py-3">F1 Macro</th>
+                <th class="px-4 py-3">CV Media</th>
+              </tr>
+            </thead>
+            <tbody id="history-tbody" class="divide-y divide-[#E2DDD5]">
+              <tr><td colspan="6" class="px-4 py-5 text-center text-[#57534E] font-mono text-xs">Aún no hay experimentos registrados en esta sesión.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Predicción de nuevos textos (individual y CSV por lotes) -->
+      <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#E2DDD5]">
+          <div>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8] font-semibold">Inferencia</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Predicción de nuevos textos</h2>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <label for="predict-model-select" class="font-mono text-xs text-[#57534E]">Modelo:</label>
+            <select id="predict-model-select" class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-1.5 text-xs sm:text-sm font-mono text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]"></select>
+          </div>
+        </div>
+
+        <!-- Predicción individual -->
+        <div class="space-y-3">
+          <label for="single-text-input" class="block font-mono text-xs font-medium text-[#1C1917]">Texto individual</label>
+          <textarea id="single-text-input" rows="3" placeholder="Escribe un texto para clasificarlo con el modelo entrenado..." class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-3 text-sm text-[#1C1917] focus:bg-white focus:outline-none focus:border-[#1D4ED8]"></textarea>
+          <button type="button" onclick="predictSingleText()" class="bg-[#1C1917] hover:bg-stone-800 text-white font-semibold text-xs sm:text-sm px-4 py-2 rounded-lg transition cursor-pointer">
+            Predecir texto
+          </button>
+
+          <div id="single-pred-result" class="hidden rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-4 space-y-2.5"></div>
+        </div>
+
+        <!-- Predicción por lotes CSV -->
+        <div class="pt-5 border-t border-[#E2DDD5] space-y-3">
+          <div class="font-mono text-xs font-semibold text-[#1C1917]">Predicción por lotes (CSV sin etiquetar)</div>
+          <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+            <input type="text" id="batch-col-name" placeholder="Columna de texto (ej. text)" class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-xs sm:text-sm font-mono text-[#1C1917] focus:bg-white focus:outline-none focus:border-[#1D4ED8]" />
+            <input type="file" id="batch-csv-input" accept=".csv" class="text-xs text-[#57534E] file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-[#E2DDD5] file:text-xs file:font-mono file:bg-white file:text-[#1C1917] hover:file:bg-stone-100" />
+            <button type="button" onclick="predictBatchCsv()" class="bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold text-xs sm:text-sm px-4 py-2 rounded-lg transition cursor-pointer shrink-0">
+              Predecir CSV
+            </button>
+          </div>
+
+          <div id="batch-pred-table" class="overflow-x-auto"></div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <script>
+    const PALETTE = ['#C2410C', '#1D4ED8', '#0F766E', '#B45309', '#4338CA', '#BE123C', '#3F6212'];
+    let classChartInstance = null;
+    const experimentsStore = {};
+
+    // Notificación discreta en esquina inferior derecha (sin usar alert())
+    function notify(message, isError = false) {
+      const toast = document.getElementById('notebook-toast');
+      const msgEl = document.getElementById('toast-message');
+      const dot = document.getElementById('toast-indicator');
+
+      msgEl.textContent = message;
+      dot.className = `mt-1 h-2 w-2 rounded-full shrink-0 ${isError ? 'bg-rose-400' : 'bg-emerald-400'}`;
+      toast.classList.remove('hidden');
+
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 3600);
+    }
+
+    // Cambio de pestañas del flujo de trabajo
+    function setActiveTab(tabName) {
+      const views = {
+        workbench: document.getElementById('view-workbench'),
+        evaluacion: document.getElementById('view-evaluacion'),
+        comparador: document.getElementById('view-comparador'),
+      };
+      const tabs = {
+        workbench: document.getElementById('tab-workbench'),
+        evaluacion: document.getElementById('tab-evaluacion'),
+        comparador: document.getElementById('tab-comparador'),
+      };
+
+      Object.keys(views).forEach((key) => {
+        const active = key === tabName;
+        views[key].classList.toggle('hidden', !active);
+        tabs[key].className = `${active ? 'tab-active' : 'tab-inactive'} px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer`;
+      });
+
+      if (tabName === 'evaluacion' && classChartInstance) {
+        setTimeout(() => classChartInstance.resize(), 40);
+      }
+    }
+
+    // Hiperparámetros dinámicos según clasificador
+    function renderHyperparams() {
+      const clf = document.getElementById('classifier').value;
+      const box = document.getElementById('hyperparams-box');
+
+      if (clf === 'logreg') {
+        box.innerHTML = `
+          <div>
+            <label for="param-penalty" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Regularización</label>
+            <select id="param-penalty" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917]">
+              <option value="l2" selected>L2 (Ridge)</option>
+              <option value="l1">L1 (Lasso)</option>
+            </select>
+          </div>
+          <div>
+            <label for="param-c" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Parámetro C</label>
+            <input type="number" id="param-c" value="1.0" step="0.1" min="0.01" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      } else if (clf === 'svm') {
+        box.innerHTML = `
+          <div>
+            <label for="param-kernel" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Kernel</label>
+            <select id="param-kernel" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917]">
+              <option value="linear" selected>Linear</option>
+              <option value="rbf">RBF</option>
+            </select>
+          </div>
+          <div>
+            <label for="param-c" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Parámetro C</label>
+            <input type="number" id="param-c" value="1.0" step="0.1" min="0.01" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      } else if (clf === 'rf') {
+        box.innerHTML = `
+          <div>
+            <label for="param-estimators" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Número de árboles</label>
+            <input type="number" id="param-estimators" value="100" step="10" min="10" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>
+          <div>
+            <label for="param-maxdepth" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Profundidad máxima</label>
+            <input type="number" id="param-maxdepth" placeholder="Sin límite" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      } else if (clf === 'nb') {
+        box.innerHTML = `
+          <div class="sm:col-span-2">
+            <label for="param-alpha" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Suavizado Alpha</label>
+            <input type="number" id="param-alpha" value="1.0" step="0.1" min="0.0" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917]" />
+          </div>`;
+      }
+    }
+    renderHyperparams();
+
+    // 1. Subir archivo CSV mediante JSON/FormData a /api/upload-csv
+    document.getElementById('csv-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload-csv', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al cargar el CSV.', true);
+          return;
+        }
+
+        const textSel = document.getElementById('text-col');
+        const labelSel = document.getElementById('label-col');
+        textSel.innerHTML = '';
+        labelSel.innerHTML = '';
+
+        data.columns.forEach((col, i) => {
+          textSel.innerHTML += `<option value="${col}" ${i === 0 ? 'selected' : ''}>${col}</option>`;
+          labelSel.innerHTML += `<option value="${col}" ${i === data.columns.length - 1 ? 'selected' : ''}>${col}</option>`;
+        });
+
+        const box = document.getElementById('column-selector-box');
+        box.classList.remove('hidden');
+        box.classList.add('grid');
+
+        notify(`Archivo "${data.filename}" cargado (${data.rows.toLocaleString()} filas).`);
+        inspectDataset();
+      } catch (err) {
+        notify('Error de red al subir el CSV.', true);
+      }
+    });
+
+    async function inspectDataset() {
+      const payload = {
+        text_col: document.getElementById('text-col').value,
+        label_col: document.getElementById('label-col').value,
+        drop_na: document.getElementById('opt-drop-na').checked,
+        drop_duplicates: document.getElementById('opt-drop-dup').checked
+      };
+
+      try {
+        const res = await fetch('/api/inspect-dataset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al inspeccionar el dataset.', true);
+          return;
+        }
+
+        document.getElementById('dataset-summary').classList.remove('hidden');
+        document.getElementById('stat-clean').textContent = data.total_clean.toLocaleString();
+        document.getElementById('stat-classes').textContent = data.classes.length;
+        document.getElementById('stat-missing').textContent = data.missing_rows.toLocaleString();
+        document.getElementById('stat-duplicates').textContent = data.duplicate_rows.toLocaleString();
+        document.getElementById('pos-backend-badge').textContent = data.pos_backend ? `POS: ${data.pos_backend}` : '';
+
+        const bar = document.getElementById('class-bar');
+        const legend = document.getElementById('class-legend');
+        bar.innerHTML = '';
+        legend.innerHTML = '';
+
+        data.distribution.forEach((item, idx) => {
+          const color = PALETTE[idx % PALETTE.length];
+          bar.innerHTML += `<div style="width:${item.percentage}%; background:${color}" title="${item.label}: ${item.percentage}%"></div>`;
+          legend.innerHTML += `<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-xs inline-block" style="background:${color}"></span><strong>${item.label}:</strong> ${item.count.toLocaleString()} (${item.percentage}%)</span>`;
+        });
+      } catch (err) {
+        notify('Error de comunicación al inspeccionar el dataset.', true);
+      }
+    }
+
+    // 2. Entrenar modelo enviando configuración JSON a /api/train
+    async function trainModel() {
+      const textCol = document.getElementById('text-col').value;
+      const labelCol = document.getElementById('label-col').value;
+      if (!textCol || !labelCol) {
+        notify('Primero sube un CSV y selecciona las columnas de texto y etiqueta.', true);
+        return;
+      }
+
+      const clf = document.getElementById('classifier').value;
+      const params = {};
+
+      if (clf === 'logreg') {
+        params.penalty = document.getElementById('param-penalty').value;
+        params.C = parseFloat(document.getElementById('param-c').value);
+      } else if (clf === 'svm') {
+        params.kernel = document.getElementById('param-kernel').value;
+        params.C = parseFloat(document.getElementById('param-c').value);
+      } else if (clf === 'rf') {
+        params.n_estimators = parseInt(document.getElementById('param-estimators').value, 10);
+        const md = document.getElementById('param-maxdepth').value;
+        if (md) params.max_depth = parseInt(md, 10);
+      } else if (clf === 'nb') {
+        params.alpha = parseFloat(document.getElementById('param-alpha').value);
+      }
+
+      const payload = {
+        text_col: textCol,
+        label_col: labelCol,
+        feature_type: document.getElementById('feature-type').value,
+        ngram_size: parseInt(document.getElementById('ngram-size').value, 10),
+        ngram_mode: document.getElementById('ngram-mode').value,
+        representation: document.getElementById('representation').value,
+        classifier: clf,
+        test_size: parseFloat(document.getElementById('test-size').value),
+        cv_folds: parseInt(document.getElementById('cv-folds').value, 10),
+        drop_na: document.getElementById('opt-drop-na').checked,
+        drop_duplicates: document.getElementById('opt-drop-dup').checked,
+        params
+      };
+
+      const btn = document.getElementById('btn-train');
+      const status = document.getElementById('train-status');
+      btn.disabled = true;
+      btn.textContent = 'Entrenando...';
+      status.textContent = 'Ejecutando pipeline en el servidor...';
+
+      try {
+        const res = await fetch('/api/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Error durante el entrenamiento.');
+
+        experimentsStore[data.id] = data;
+        renderResults(data);
+        addExperimentRow(data);
+
+        status.textContent = `${data.id} listo · ${data.metrics.accuracy}% accuracy`;
+        notify(`Experimento ${data.id} finalizado (Accuracy: ${data.metrics.accuracy}%, F1 Macro: ${data.metrics.f1_macro}%).`);
+        setActiveTab('evaluacion');
+      } catch (err) {
+        notify(err.message, true);
+        status.textContent = 'Error en la ejecución del pipeline.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ejecutar entrenamiento';
+      }
+    }
+
+    function renderResults(data) {
+      document.getElementById('eval-title').textContent = `${data.id} · ${data.classifier} (${data.features})`;
+      document.getElementById('eval-split-meta').textContent = `Train: ${data.train_samples} · Test: ${data.test_samples} · F1 Weighted: ${data.metrics.f1_weighted ?? '--'}%`;
+
+      document.getElementById('kpi-acc').textContent = `${data.metrics.accuracy}%`;
+      document.getElementById('kpi-prec').textContent = `${data.metrics.precision_macro}%`;
+      document.getElementById('kpi-rec').textContent = `${data.metrics.recall_macro}%`;
+      document.getElementById('kpi-f1').textContent = `${data.metrics.f1_macro}%`;
+
+      const ctx = document.getElementById('classChart').getContext('2d');
+      if (classChartInstance) classChartInstance.destroy();
+      classChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: data.per_class.map((c) => c.label),
+          datasets: [
+            { label: 'Precision %', data: data.per_class.map((c) => c.precision), backgroundColor: '#1D4ED8', borderRadius: 4 },
+            { label: 'Recall %', data: data.per_class.map((c) => c.recall), backgroundColor: '#C2410C', borderRadius: 4 },
+            { label: 'F1-Score %', data: data.per_class.map((c) => c.f1), backgroundColor: '#0F766E', borderRadius: 4 }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true, max: 100 }
+          }
+        }
+      });
+
+      let cmHtml = '<table class="mono text-xs border-collapse w-full text-center"><thead><tr><th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5]">Real \\ Pred</th>';
+      data.classes.forEach((c) => {
+        cmHtml += `<th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5] text-[#1C1917]">${c}</th>`;
+      });
+      cmHtml += '</tr></thead><tbody>';
+
+      data.confusion_matrix.forEach((row, i) => {
+        cmHtml += `<tr><th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5] text-left text-[#1C1917]">${data.classes[i]}</th>`;
+        row.forEach((val, j) => {
+          const cellClass = i === j
+            ? 'bg-blue-50 font-bold text-[#1D4ED8]'
+            : 'bg-white text-[#1C1917]';
+          cmHtml += `<td class="p-2 border border-[#E2DDD5] ${cellClass}">${val}</td>`;
+        });
+        cmHtml += '</tr>';
+      });
+      cmHtml += '</tbody></table>';
+      document.getElementById('confusion-matrix-container').innerHTML = cmHtml;
+
+      const cvBox = document.getElementById('cv-container');
+      if (data.cv) {
+        cvBox.innerHTML = `
+          <div class="space-y-3">
+            <div class="flex flex-wrap gap-2">
+              ${data.cv.scores.map((s, idx) => `<span class="font-mono text-xs bg-[#FAF8F5] text-[#1C1917] border border-[#E2DDD5] px-2.5 py-1 rounded-md">Fold ${idx + 1}: <strong>${s}%</strong></span>`).join('')}
+            </div>
+            <div class="font-mono text-xs sm:text-sm pt-3 border-t border-[#E2DDD5] text-[#1C1917]">
+              Promedio: <strong class="text-[#1D4ED8]">${data.cv.mean}%</strong> · Desviación estándar: <strong class="text-[#C2410C]">${data.cv.std} pp</strong>
+            </div>
+          </div>`;
+      } else {
+        cvBox.textContent = 'Validación cruzada desactivada en este experimento.';
+      }
+    }
+
+    // Agregar fila al historial y actualizar selector de modelos para predicción
+    function addExperimentRow(data) {
+      const tbody = document.getElementById('history-tbody');
+      if (data.id === 'EXP-01') tbody.innerHTML = '';
+
+      const cvText = data.cv ? `${data.cv.mean}% (±${data.cv.std})` : 'Sin CV';
+      tbody.innerHTML += `
+        <tr onclick="inspectSavedExperiment('${data.id}')" class="hover:bg-[#FAF8F5] cursor-pointer transition">
+          <td class="px-4 py-3 font-mono font-bold text-[#C2410C]">${data.id}</td>
+          <td class="px-4 py-3 font-medium text-[#1C1917]">${data.classifier}</td>
+          <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${data.features}</td>
+          <td class="px-4 py-3 font-mono font-semibold text-[#1C1917]">${data.metrics.accuracy}%</td>
+          <td class="px-4 py-3 font-mono font-semibold text-[#1D4ED8]">${data.metrics.f1_macro}%</td>
+          <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${cvText}</td>
+        </tr>`;
+
+      const sel = document.getElementById('predict-model-select');
+      sel.innerHTML += `<option value="${data.id}" selected>${data.id} · ${data.classifier} (${data.metrics.accuracy}%)</option>`;
+    }
+
+    function inspectSavedExperiment(expId) {
+      const exp = experimentsStore[expId];
+      if (!exp) return;
+      renderResults(exp);
+      setActiveTab('evaluacion');
+      notify(`Mostrando evaluación de ${expId}.`);
+    }
+
+    // 3. Predicción individual mediante JSON a /api/predict-text
+    async function predictSingleText() {
+      const expId = document.getElementById('predict-model-select').value;
+      const text = document.getElementById('single-text-input').value.trim();
+
+      if (!expId) {
+        notify('Entrena al menos un modelo antes de predecir.', true);
+        return;
+      }
+      if (!text) {
+        notify('Escribe un texto para clasificar.', true);
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/predict-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ experiment_id: expId, text })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al predecir el texto.', true);
+          return;
+        }
+
+        const box = document.getElementById('single-pred-result');
+        box.classList.remove('hidden');
+        box.innerHTML = `
+          <div class="flex items-center justify-between text-xs sm:text-sm">
+            <span class="font-mono text-[#57534E]">Modelo: <strong>${data.experiment_id}</strong></span>
+            <span class="font-mono font-bold text-[#C2410C]">Clase predicha: ${data.predicted_class}</span>
+          </div>
+          <div class="space-y-2 pt-2">
+            ${data.probabilities.map((p) => `
+              <div class="flex items-center gap-3 text-xs">
+                <span class="w-28 truncate font-mono font-medium text-[#1C1917]">${p.label}</span>
+                <div class="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden">
+                  <div class="h-full bg-[#1D4ED8]" style="width:${p.probability}%"></div>
+                </div>
+                <span class="font-mono w-14 text-right text-[#1C1917]">${p.probability}%</span>
+              </div>
+            `).join('')}
+          </div>`;
+      } catch (err) {
+        notify('Error de red al predecir el texto.', true);
+      }
+    }
+
+    // 4. Predicción por lotes CSV a /api/predict-csv
+    async function predictBatchCsv() {
+      const expId = document.getElementById('predict-model-select').value;
+      const colName = document.getElementById('batch-col-name').value.trim();
+      const file = document.getElementById('batch-csv-input').files[0];
+
+      if (!expId) {
+        notify('Selecciona un modelo entrenado.', true);
+        return;
+      }
+      if (!colName || !file) {
+        notify('Indica el nombre de la columna de texto y selecciona un CSV.', true);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch(`/api/predict-csv?experiment_id=${encodeURIComponent(expId)}&text_col=${encodeURIComponent(colName)}`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          notify(data.detail || 'Error al predecir el CSV.', true);
+          return;
+        }
+
+        let html = `<div class="font-mono text-xs text-[#57534E] mt-3 mb-1.5">Predicciones generadas: ${data.total} filas (mostrando hasta 50)</div>`;
+        html += `<table class="w-full text-xs text-left border border-[#E2DDD5] bg-white"><thead class="bg-[#FAF8F5] font-mono text-[#57534E]"><tr><th class="p-2 border border-[#E2DDD5]">#</th><th class="p-2 border border-[#E2DDD5]">Texto</th><th class="p-2 border border-[#E2DDD5]">Clase predicha</th><th class="p-2 border border-[#E2DDD5]">Confianza</th></tr></thead><tbody>`;
+
+        data.predictions.slice(0, 50).forEach((r) => {
+          html += `<tr><td class="p-2 border border-[#E2DDD5] font-mono">${r.row}</td><td class="p-2 border border-[#E2DDD5] text-[#1C1917]">${r.text}</td><td class="p-2 border border-[#E2DDD5] font-mono font-bold text-[#1D4ED8]">${r.predicted_class}</td><td class="p-2 border border-[#E2DDD5] font-mono">${r.confidence}%</td></tr>`;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById('batch-pred-table').innerHTML = html;
+        notify(`Predicción por lotes completada (${data.total} textos).`);
+      } catch (err) {
+        notify('Error de red al predecir el CSV.', true);
+      }
+    }
+  </script>
+</body>
+</html>
