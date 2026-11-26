@@ -868,7 +868,11 @@
       const select = document.getElementById('predict-model-select');
       const ids = Object.keys(experimentsStore);
 
-      if (ids.length === 0) return;
+      if (ids.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-5 text-center text-[#57534E] font-mono text-xs">Aún no hay experimentos registrados en esta sesión.</td></tr>';
+        select.innerHTML = '';
+        return;
+      }
 
       tbody.innerHTML = ids.map((id) => {
         const item = experimentsStore[id];
@@ -894,6 +898,28 @@
       renderEvaluation(exp);
       document.getElementById('predict-model-select').value = id;
       setActiveTab('evaluacion');
+    }
+
+    async function loadPersistedExperiments() {
+      try {
+        const res = await fetch('/api/experiments');
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = Array.isArray(data.experiments) ? data.experiments : [];
+        if (items.length === 0) return;
+
+        items.forEach((exp) => {
+          if (exp && exp.id) {
+            experimentsStore[exp.id] = exp;
+          }
+        });
+
+        const latest = items[items.length - 1];
+        renderEvaluation(latest);
+        refreshHistoryAndPredictor(latest.id);
+      } catch (_) {
+        // Silencioso al cargar la página si aún no hay historial
+      }
     }
 
     async function predictSingleText() {
@@ -993,6 +1019,8 @@
         notify('Error de red al predecir CSV.', true);
       }
     }
+
+    loadPersistedExperiments();
   </script>
 </body>
 </html>
