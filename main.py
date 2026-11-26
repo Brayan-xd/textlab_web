@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import re
 import time
@@ -54,15 +55,66 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+HISTORY_FILE = "experiments_history.json"
+JOBS_LOCK = threading.Lock()
+
+
+def _load_persisted_history() -> tuple[Dict[str, Dict[str, Any]], int]:
+    if not os.path.exists(HISTORY_FILE):
+        return {}, 0
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        experiments_map: Dict[str, Dict[str, Any]] = {}
+        max_num = 0
+        items = raw.get("experiments", []) if isinstance(raw, dict) else []
+        for summary in items:
+            if not isinstance(summary, dict) or "id" not in summary:
+                continue
+            exp_id = str(summary["id"])
+            experiments_map[exp_id] = {
+                "pipeline": None,  # Solo el pipeline en memoria de esta sesión soporta inferencia directa
+                "classes": summary.get("classes", []),
+                "summary": summary,
+            }
+            match = re.search(r"(\d+)$", exp_id)
+            if match:
+                max_num = max(max_num, int(match.group(1)))
+        saved_counter = int(raw.get("counter", max_num)) if isinstance(raw, dict) else max_num
+        return experiments_map, max(max_num, saved_counter)
+    except Exception:
+        return {}, 0
+
+
+def _save_persisted_history(experiments_map: Dict[str, Dict[str, Any]], counter: int) -> None:
+    try:
+        summaries = [
+            entry["summary"]
+            for entry in experiments_map.values()
+            if isinstance(entry, dict) and entry.get("summary")
+        ]
+        payload = {
+            "counter": int(counter),
+            "experiments": summaries,
+        }
+        tmp_file = f"{HISTORY_FILE}.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_file, HISTORY_FILE)
+    except Exception:
+        pass
+
+
+initial_experiments, initial_counter = _load_persisted_history()
+
 # Almacenamiento en memoria de la sesión actual y trabajos de entrenamiento
 SESSION_STATE: Dict[str, Any] = {
     "df": None,
     "filename": None,
-    "experiments": {},  # id -> {pipeline, classes, summary}
-    "jobs": {},         # job_id -> estado del trabajo
+    "exp_counter": initial_counter,
+    "experiments": initial_experiments,  # id -> {pipeline, classes, summary}
+    "jobs": {},                          # job_id -> estado del trabajo
 }
-
-JOBS_LOCK = threading.Lock()
 
 try:
     SPANISH_STOPWORDS = set(stopwords.words("spanish")) | set(stopwords.words("english"))
@@ -281,8 +333,8 @@ def _run_training_job(job_id: str, df: pd.DataFrame, req: TrainRequest) -> None:
         ]
 
         with JOBS_LOCK:
-            exp_num = len(SESSION_STATE["experiments"]) + 1
-            exp_id = f"EXP-{exp_num:02d}"
+            SESSION_STATE["exp_counter"] += 1
+            exp_id = f"EXP-{SESSION_STATE['exp_counter']:02d}"
 
         feat_map = {
             "ngrams": f"{n_val}-gramas",
@@ -315,6 +367,10 @@ def _run_training_job(job_id: str, df: pd.DataFrame, req: TrainRequest) -> None:
                 "classes": classes,
                 "summary": result_payload,
             }
+            _save_persisted_history(
+                SESSION_STATE["experiments"],
+                SESSION_STATE["exp_counter"],
+            )
 
         _update_job(
             job_id,
@@ -344,6 +400,17 @@ def serve_frontend():
 @app.get("/favicon.ico")
 def favicon():
     return Response(status_code=204)
+
+
+@app.get("/api/experiments")
+def list_experiments():
+    with JOBS_LOCK:
+        summaries = [
+            entry["summary"]
+            for entry in SESSION_STATE["experiments"].values()
+            if isinstance(entry, dict) and entry.get("summary")
+        ]
+    return {"experiments": summaries}
 
 
 @app.post("/api/upload-csv")
@@ -460,11 +527,11 @@ def train_status(job_id: str):
 
         return {
             "job_id": job["job_id"],
-            "status": job["status"],         # queued | running | done | error
-            "stage": job["stage"],           # preparando datos | validación cruzada | entrenando modelo final | completado | error
+            "status": job["status"],         #queued | running | done | error
+            "stage": job["stage"],           #preparando datos | validación cruzada | entrenando modelo final | completado | error
             "elapsed_seconds": elapsed,
-            "result": job["result"],         # presente cuando status == "done"
-            "error": job["error"],           # presente cuando status == "error"
+            "result": job["result"],         #presente cuando status == "done"
+            "error": job["error"],           #presente cuando status == "error"
         }
 
 
@@ -474,7 +541,13 @@ def predict_text(req: PredictTextRequest):
     if not exp:
         raise HTTPException(status_code=404, detail="Experimento no encontrado.")
 
-    pipeline = exp["pipeline"]
+    pipeline = exp.get("pipeline")
+    if pipeline is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Este experimento proviene de un historial guardado y su modelo en memoria ya no está disponible; vuelve a entrenarlo en esta sesión para predecir.",
+        )
+
     classes = exp["classes"]
     pred = str(pipeline.predict([req.text])[0])
 
@@ -502,6 +575,13 @@ async def predict_csv(experiment_id: str, text_col: str, file: UploadFile = File
     if not exp:
         raise HTTPException(status_code=404, detail="Experimento no encontrado.")
 
+    pipeline = exp.get("pipeline")
+    if pipeline is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Este experimento proviene de un historial guardado y su modelo en memoria ya no está disponible; vuelve a entrenarlo en esta sesión para predecir.",
+        )
+
     content = await file.read()
     df = _read_csv_bytes(content)
 
@@ -509,11 +589,11 @@ async def predict_csv(experiment_id: str, text_col: str, file: UploadFile = File
         raise HTTPException(status_code=400, detail=f"La columna '{text_col}' no existe en el CSV.")
 
     texts = df[text_col].fillna("").astype(str).tolist()
-    preds = exp["pipeline"].predict(texts)
+    preds = pipeline.predict(texts)
 
     results = []
-    has_proba = hasattr(exp["pipeline"], "predict_proba")
-    probas = exp["pipeline"].predict_proba(texts) if has_proba else None
+    has_proba = hasattr(pipeline, "predict_proba")
+    probas = pipeline.predict_proba(texts) if has_proba else None
 
     for idx, txt in enumerate(texts):
         conf = round(float(np.max(probas[idx])) * 100, 2) if has_proba else 100.0
