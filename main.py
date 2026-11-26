@@ -94,12 +94,12 @@ class DatasetInspectRequest(BaseModel):
 class TrainRequest(BaseModel):
     text_col: str
     label_col: str
-    feature_type: str       # ngrams, pos, stopwords, content_words
-    ngram_size: int         # 1, 2, 3
-    representation: str     # freq, binary, tfidf
-    classifier: str         # logreg, svm, rf, nb
-    test_size: float        # e.g. 0.2
-    cv_folds: int           # 0, 3, 5, 10
+    feature_type: str       #ngrams, pos, stopwords, content_words
+    ngram_size: int         #1, 2, 3
+    representation: str     #freq, binary, tfidf
+    classifier: str         #logreg, svm, rf, nb
+    test_size: float        #e.g. 0.2
+    cv_folds: int           #0, 3, 5, 10
     params: Dict[str, Any]
 
 
@@ -116,11 +116,11 @@ def serve_frontend():
 @app.post("/api/upload-csv")
 async def upload_csv(file: UploadFile = File(...)):
     try:
-        content = await file.read()
+        content= await file.read()
         try:
-            df = pd.read_csv(io.BytesIO(content), encoding="utf-8")
+            df= pd.read_csv(io.BytesIO(content), encoding="utf-8")
         except UnicodeDecodeError:
-            df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
+            df= pd.read_csv(io.BytesIO(content), encoding="latin-1")
 
         SESSION_STATE["df"] = df
         SESSION_STATE["filename"] = file.filename
