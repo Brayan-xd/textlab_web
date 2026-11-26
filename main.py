@@ -1,12 +1,13 @@
 import io
-import uuid
+import os
+import re
 import numpy as np
 import pandas as pd
 import nltk
-from typing import List, Optional, Dict, Any
+from typing import Dict, Any
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
@@ -23,12 +24,21 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-# Descarga silenciosa de recursos de NLTK para tokenización, stopwords y POS tagging
-for resource in ["punkt", "punkt_tab", "stopwords", "averaged_perceptron_tagger", "averaged_perceptron_tagger_eng"]:
+# Descarga recursos de NLTK solo si no existen aún en el entorno
+NLTK_RESOURCES = [
+    ("corpora/stopwords", "stopwords"),
+    ("taggers/averaged_perceptron_tagger", "averaged_perceptron_tagger"),
+    ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
+]
+
+for resource_path, pkg_name in NLTK_RESOURCES:
     try:
-        nltk.download(resource, quiet=True)
-    except Exception:
-        pass
+        nltk.data.find(resource_path)
+    except LookupError:
+        try:
+            nltk.download(pkg_name, quiet=True)
+        except Exception:
+            pass
 
 from nltk.corpus import stopwords
 
@@ -45,10 +55,15 @@ app.add_middleware(
 SESSION_STATE: Dict[str, Any] = {
     "df": None,
     "filename": None,
-    "experiments": {},  # id -> {metadata, pipeline, classes}
+    "experiments": {},  # id -> {pipeline, classes, summary}
 }
 
-SPANISH_STOPWORDS = set(stopwords.words("spanish")) | set(stopwords.words("english"))
+try:
+    SPANISH_STOPWORDS = set(stopwords.words("spanish")) | set(stopwords.words("english"))
+except LookupError:
+    SPANISH_STOPWORDS = set()
+
+TOKEN_RE = re.compile(r"[a-zA-Z0-9áéíóúüñ]+", re.UNICODE)
 
 
 class LinguisticPreprocessor(BaseEstimator, TransformerMixin):
@@ -61,24 +76,30 @@ class LinguisticPreprocessor(BaseEstimator, TransformerMixin):
         return self
 
     def _transform_text(self, text: str) -> str:
-        text = str(text).strip()
-        if not text:
+        s = str(text).strip().lower()
+        if not s:
             return ""
-        tokens = nltk.word_tokenize(text.lower())
-        alpha_tokens = [t for t in tokens if t.isalpha()]
+
+        tokens = TOKEN_RE.findall(s)
+        if not tokens:
+            return ""
 
         if self.feature_type == "ngrams":
-            return " ".join(alpha_tokens)
+            return " ".join(tokens)
         elif self.feature_type == "stopwords":
-            sw = [t for t in alpha_tokens if t in SPANISH_STOPWORDS]
+            sw = [t for t in tokens if t in SPANISH_STOPWORDS]
             return " ".join(sw) if sw else "none_sw"
         elif self.feature_type == "content_words":
-            cw = [t for t in alpha_tokens if t not in SPANISH_STOPWORDS]
+            cw = [t for t in tokens if t not in SPANISH_STOPWORDS]
             return " ".join(cw) if cw else "none_cw"
         elif self.feature_type == "pos":
-            tagged = nltk.pos_tag(alpha_tokens)
-            return " ".join([tag for _, tag in tagged]) if tagged else "NONE"
-        return text
+            try:
+                tagged = nltk.pos_tag(tokens)
+                return " ".join([tag for _, tag in tagged]) if tagged else "NONE"
+            except Exception:
+                return " ".join(tokens)
+
+        return " ".join(tokens)
 
     def transform(self, X):
         return [self._transform_text(doc) for doc in X]
@@ -94,13 +115,14 @@ class DatasetInspectRequest(BaseModel):
 class TrainRequest(BaseModel):
     text_col: str
     label_col: str
-    feature_type: str       #ngrams, pos, stopwords, content_words
-    ngram_size: int         #1, 2, 3
-    representation: str     #freq, binary, tfidf
-    classifier: str         #logreg, svm, rf, nb
-    test_size: float        #e.g. 0.2
-    cv_folds: int           #0, 3, 5, 10
-    params: Dict[str, Any]
+    feature_type: str             # ngrams, pos, stopwords, content_words
+    ngram_size: int               # 1, 2, 3
+    ngram_scope: str = "exact"    # exact o up_to
+    representation: str           # freq, binary, tfidf
+    classifier: str               # logreg, svm, rf, nb
+    test_size: float              # e.g. 0.2
+    cv_folds: int                 # 0, 3, 5, 10
+    params: Dict[str, Any] = {}
 
 
 class PredictTextRequest(BaseModel):
@@ -108,19 +130,32 @@ class PredictTextRequest(BaseModel):
     text: str
 
 
+def _read_csv_bytes(content: bytes) -> pd.DataFrame:
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return pd.read_csv(io.BytesIO(content), encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    return pd.read_csv(io.BytesIO(content), encoding="utf-8", errors="replace")
+
+
 @app.get("/")
 def serve_frontend():
-    return FileResponse("index.html")
+    if os.path.exists("index.html"):
+        return FileResponse("index.html")
+    raise HTTPException(status_code=404, detail="index.html no encontrado.")
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(status_code=204)
 
 
 @app.post("/api/upload-csv")
 async def upload_csv(file: UploadFile = File(...)):
     try:
         content = await file.read()
-        try:
-            df = pd.read_csv(io.BytesIO(content), encoding="utf-8")
-        except UnicodeDecodeError:
-            df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
+        df = _read_csv_bytes(content)
 
         SESSION_STATE["df"] = df
         SESSION_STATE["filename"] = file.filename
@@ -183,6 +218,9 @@ def train_model(req: TrainRequest):
     if df is None:
         raise HTTPException(status_code=400, detail="Carga un dataset primero.")
 
+    if req.text_col not in df.columns or req.label_col not in df.columns:
+        raise HTTPException(status_code=400, detail="Columnas seleccionadas no válidas.")
+
     clean_df = df[[req.text_col, req.label_col]].dropna().drop_duplicates().copy()
     X = clean_df[req.text_col].astype(str).values
     y = clean_df[req.label_col].astype(str).values
@@ -191,42 +229,51 @@ def train_model(req: TrainRequest):
     if len(classes) < 2:
         raise HTTPException(status_code=400, detail="El dataset debe tener al menos 2 clases.")
 
-    #Vectorizador según representación y tamaño de n-grama
-    ngram_range = (req.ngram_size, req.ngram_size)
-    if req.representation == "tfidf":
-        vectorizer = TfidfVectorizer(ngram_range=ngram_range, max_features=10000)
-    elif req.representation == "binary":
-        vectorizer = CountVectorizer(ngram_range=ngram_range, binary=True, max_features=10000)
-    else:
-        vectorizer = CountVectorizer(ngram_range=ngram_range, binary=False, max_features=10000)
+    n_val = max(1, min(3, int(req.ngram_size)))
+    ngram_range = (1, n_val) if req.ngram_scope == "up_to" else (n_val, n_val)
+    max_feat = 5000
 
-    #Clasificador y sus hiperparámetros
-    p = req.params
+    if req.representation == "tfidf":
+        vectorizer = TfidfVectorizer(ngram_range=ngram_range, max_features=max_feat)
+    elif req.representation == "binary":
+        vectorizer = CountVectorizer(ngram_range=ngram_range, binary=True, max_features=max_feat)
+    else:
+        vectorizer = CountVectorizer(ngram_range=ngram_range, binary=False, max_features=max_feat)
+
+    p = req.params or {}
     if req.classifier == "logreg":
-        penalty = p.get("penalty", "l2")
-        solver = "liblinear" if penalty == "l1" else "lbfgs"
-        clf = LogisticRegression(
-            C=float(p.get("C", 1.0)),
-            penalty=penalty,
-            solver=solver,
-            max_iter=1000,
-            random_state=42,
-        )
+        penalty = str(p.get("penalty", "l2")).lower()
+        c_val = float(p.get("C", 1.0))
+        if penalty == "l1":
+            clf = LogisticRegression(
+                C=c_val,
+                l1_ratio=1.0,
+                solver="saga",
+                max_iter=1000,
+                random_state=42,
+            )
+        else:
+            clf = LogisticRegression(
+                C=c_val,
+                l1_ratio=0.0,
+                max_iter=1000,
+                random_state=42,
+            )
         clf_label = "Regresión Logística"
     elif req.classifier == "svm":
         clf = SVC(
             C=float(p.get("C", 1.0)),
             kernel=p.get("kernel", "linear"),
-            probability=True,
+            probability=False,
             random_state=42,
         )
         clf_label = "SVM"
     elif req.classifier == "rf":
         clf = RandomForestClassifier(
-            n_estimators=int(p.get("n_estimators", 100)),
+            n_estimators=min(int(p.get("n_estimators", 100)), 150),
             max_depth=int(p["max_depth"]) if p.get("max_depth") else None,
             random_state=42,
-            n_jobs=-1,
+            n_jobs=1,
         )
         clf_label = "Random Forest"
     elif req.classifier == "nb":
@@ -235,7 +282,6 @@ def train_model(req: TrainRequest):
     else:
         raise HTTPException(status_code=400, detail="Clasificador no soportado.")
 
-    #Pipeline completo: evita data leakage en Train/Test y en Cross-Validation
     pipeline = Pipeline([
         ("linguistic", LinguisticPreprocessor(feature_type=req.feature_type)),
         ("vectorizer", vectorizer),
@@ -246,11 +292,10 @@ def train_model(req: TrainRequest):
         X, y, test_size=req.test_size, stratify=y, random_state=42
     )
 
-    #Validación cruzada estratificada solo sobre el conjunto de entrenamiento
     cv_result = None
     if req.cv_folds in [3, 5, 10]:
         skf = StratifiedKFold(n_splits=req.cv_folds, shuffle=True, random_state=42)
-        scores = cross_val_score(pipeline, X_train, y_train, cv=skf, scoring="accuracy")
+        scores = cross_val_score(pipeline, X_train, y_train, cv=skf, scoring="accuracy", n_jobs=1)
         cv_result = {
             "folds": req.cv_folds,
             "scores": [round(float(s) * 100, 2) for s in scores],
@@ -258,7 +303,6 @@ def train_model(req: TrainRequest):
             "std": round(float(np.std(scores)) * 100, 2),
         }
 
-    # Entrenamiento final en train y evaluación en test
     pipeline.fit(X_train, y_train)
     y_pred = pipeline.predict(X_test)
 
@@ -286,16 +330,16 @@ def train_model(req: TrainRequest):
     exp_id = f"EXP-{exp_num:02d}"
 
     feat_map = {
-        "ngrams": f"{req.ngram_size}-gramas",
-        "pos": f"POS ({req.ngram_size}-g)",
-        "stopwords": f"Stopwords ({req.ngram_size}-g)",
-        "content_words": f"Content words ({req.ngram_size}-g)",
+        "ngrams": f"{n_val}-gramas",
+        "pos": f"POS ({n_val}-g)",
+        "stopwords": f"Stopwords ({n_val}-g)",
+        "content_words": f"Content words ({n_val}-g)",
     }
 
     result_payload = {
         "id": exp_id,
         "classifier": clf_label,
-        "features": f"{feat_map[req.feature_type]} · {req.representation.upper()}",
+        "features": f"{feat_map.get(req.feature_type, req.feature_type)} · {req.representation.upper()}",
         "train_samples": int(len(X_train)),
         "test_samples": int(len(X_test)),
         "classes": classes,
@@ -354,10 +398,7 @@ async def predict_csv(experiment_id: str, text_col: str, file: UploadFile = File
         raise HTTPException(status_code=404, detail="Experimento no encontrado.")
 
     content = await file.read()
-    try:
-        df = pd.read_csv(io.BytesIO(content), encoding="utf-8")
-    except UnicodeDecodeError:
-        df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
+    df = _read_csv_bytes(content)
 
     if text_col not in df.columns:
         raise HTTPException(status_code=400, detail=f"La columna '{text_col}' no existe en el CSV.")
