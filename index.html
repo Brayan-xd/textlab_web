@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TextLab — Cuaderno de Experimentación NLP</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <script>
+    // Configuración de tipografía y paleta editorial científica cálida
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'monospace'],
+          },
+          colors: {
+            paper: '#FAF8F5',
+            surface: '#FFFFFF',
+            ink: '#1C1917',
+            muted: '#57534E',
+            line: '#E2DDD5',
+            terracotta: '#C2410C',
+            cobalt: '#1D4ED8',
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    body {
+      background-color: #FAF8F5;
+      color: #1C1917;
+      background-image: radial-gradient(#E2DDD5 0.75px, transparent 0.75px);
+      background-size: 20px 20px;
+    }
+    .font-mono {
+      font-family: 'IBM Plex Mono', monospace;
+    }
+    .tab-active {
+      background-color: #1C1917;
+      color: #FAF8F5;
+      border-color: #1C1917;
+    }
+    .tab-inactive {
+      background-color: #FFFFFF;
+      color: #57534E;
+      border-color: #E2DDD5;
+    }
+    .tab-inactive:hover {
+      color: #1C1917;
+      border-color: #C2410C;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Notificación flotante en pantalla (evita alert() bloqueante) -->
+  <div id="notebook-toast" class="fixed bottom-5 right-5 z-50 hidden max-w-md bg-stone-900 text-stone-50 border border-stone-700 rounded-lg px-4 py-3 shadow-xl text-xs font-mono">
+    <div class="flex items-start gap-2.5">
+      <span id="toast-indicator" class="mt-1 h-2 w-2 rounded-full bg-amber-400 shrink-0"></span>
+      <span id="toast-message" class="leading-relaxed"></span>
+    </div>
+  </div>
+
+  <!-- Barra Superior Compacta con Pestañas de Flujo de Trabajo -->
+  <header class="sticky top-0 z-30 bg-[#FAF8F5]/95 backdrop-blur-sm border-b border-[#E2DDD5]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+
+      <!-- Identidad del cuaderno técnico -->
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-md border border-[#C2410C] bg-[#C2410C]/10 text-[#C2410C] font-mono font-bold text-sm flex items-center justify-center">
+            TL
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h1 class="text-base sm:text-lg font-extrabold tracking-tight text-[#1C1917]">TextLab</h1>
+              <span class="font-mono text-[11px] px-2 py-0.5 rounded border border-[#E2DDD5] bg-white text-[#57534E]">NLP LAB NOTEBOOK</span>
+            </div>
+            <p class="text-xs text-[#57534E]">Clasificación supervisada de textos · JSON REST Pipeline</p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 font-mono text-[11px] text-[#57534E] bg-white border border-[#E2DDD5] px-2.5 py-1 rounded-md">
+          <span id="api-dot" class="w-2 h-2 rounded-full bg-emerald-600"></span>
+          <span>API JSON</span>
+        </div>
+      </div>
+
+      <!-- Pestañas de Flujo de Trabajo -->
+      <nav aria-label="Secciones del cuaderno" class="flex flex-wrap items-center gap-1.5 sm:gap-2">
+        <button id="tab-workbench" type="button" onclick="setActiveTab('workbench')" class="tab-active px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer">
+          Workbench
+        </button>
+        <button id="tab-evaluacion" type="button" onclick="setActiveTab('evaluacion')" class="tab-inactive px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer">
+          Evaluación
+        </button>
+        <button id="tab-comparador" type="button" onclick="setActiveTab('comparador')" class="tab-inactive px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer">
+          Comparador &amp; Predicción
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Cuerpo Principal del Cuaderno -->
+  <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+
+    <!-- ===================================================================== -->
+    <!-- PESTAÑA 1: WORKBENCH (Dataset + Características + Entrenamiento)      -->
+    <!-- ===================================================================== -->
+    <div id="view-workbench" class="space-y-6">
+
+      <!-- Bloque A: Gestión del conjunto de datos -->
+      <section id="sec-dataset" class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 shadow-2xs space-y-5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E2DDD5]">
+          <div>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#C2410C] font-semibold">Módulo 01 · Corpus &amp; Auditoría</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Gestión del conjunto de datos</h2>
+            <p class="text-xs text-[#57534E] mt-0.5">Carga cualquier archivo CSV etiquetado, selecciona columnas de texto y clase, y audita nulos, duplicados y clases.</p>
+          </div>
+
+          <label class="cursor-pointer inline-flex items-center justify-center gap-2 bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-lg transition shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            <span>Cargar CSV</span>
+            <input type="file" id="csv-input" accept=".csv" class="hidden" />
+          </label>
+        </div>
+
+        <!-- Selector de columnas e inspección -->
+        <div id="column-selector-box" class="hidden grid-cols-1 md:grid-cols-4 gap-4 items-end bg-[#FAF8F5] border border-[#E2DDD5] rounded-lg p-4">
+          <div>
+            <label for="text-col" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Columna de texto</label>
+            <select id="text-col" class="w-full rounded-lg border border-[#E2DDD5] bg-white px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]"></select>
+          </div>
+
+          <div>
+            <label for="label-col" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Columna de etiqueta</label>
+            <select id="label-col" class="w-full rounded-lg border border-[#E2DDD5] bg-white px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]"></select>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-4 text-xs font-mono text-[#57534E] py-1">
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+              <input id="opt-drop-na" type="checkbox" checked class="rounded border-[#E2DDD5] text-[#C2410C] focus:ring-[#C2410C]" />
+              <span>Filtrar nulos</span>
+            </label>
+            <label class="inline-flex items-center gap-1.5 cursor-pointer">
+              <input id="opt-drop-dup" type="checkbox" checked class="rounded border-[#E2DDD5] text-[#C2410C] focus:ring-[#C2410C]" />
+              <span>Quitar duplicados</span>
+            </label>
+          </div>
+
+          <div>
+            <button type="button" onclick="inspectDataset()" class="w-full bg-[#1C1917] hover:bg-stone-800 text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-lg transition cursor-pointer">
+              Inspeccionar dataset
+            </button>
+          </div>
+        </div>
+
+        <!-- Resumen de auditoría y distribución de clases -->
+        <div id="dataset-summary" class="hidden space-y-4">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-3.5">
+              <span class="font-mono text-[11px] text-[#57534E] block">Muestras útiles</span>
+              <span id="stat-clean" class="font-mono text-xl font-bold text-[#1C1917] mt-0.5 block">0</span>
+            </div>
+            <div class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-3.5">
+              <span class="font-mono text-[11px] text-[#57534E] block">Clases identificadas</span>
+              <span id="stat-classes" class="font-mono text-xl font-bold text-[#1D4ED8] mt-0.5 block">0</span>
+            </div>
+            <div class="rounded-lg border border-amber-200 bg-amber-50/70 p-3.5">
+              <span class="font-mono text-[11px] text-amber-800 block">Filas con faltantes</span>
+              <span id="stat-missing" class="font-mono text-xl font-bold text-amber-900 mt-0.5 block">0</span>
+            </div>
+            <div class="rounded-lg border-rose-200 border bg-rose-50/70 p-3.5">
+              <span class="font-mono text-[11px] text-rose-800 block">Registros duplicados</span>
+              <span id="stat-duplicates" class="font-mono text-xl font-bold text-rose-900 mt-0.5 block">0</span>
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-4 space-y-2.5">
+            <div class="flex items-center justify-between text-xs font-mono text-[#57534E]">
+              <span>Distribución empírica de clases</span>
+              <span id="pos-backend-badge" class="text-[11px] text-[#1D4ED8]"></span>
+            </div>
+            <div id="class-bar" class="w-full h-3 rounded-full overflow-hidden flex bg-stone-200"></div>
+            <div id="class-legend" class="flex flex-wrap gap-x-5 gap-y-1.5 pt-1 text-xs font-mono text-[#1C1917]"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Grid Inferior del Workbench: Características (izq) + Modelo (der) -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Bloque B: Extracción de características -->
+        <section id="sec-features" class="lg:col-span-5 bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 shadow-2xs space-y-4">
+          <div class="pb-3 border-b border-[#E2DDD5]">
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8] font-semibold">Módulo 02 · Representación</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Extracción de características</h2>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label for="feature-type" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Tipo de característica</label>
+              <select id="feature-type" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                <option value="ngrams">N-gramas de palabras</option>
+                <option value="pos">Etiquetas POS (Part-of-Speech)</option>
+                <option value="stopwords">Stopwords</option>
+                <option value="content_words">Content words</option>
+              </select>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label for="ngram-size" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Orden n (1, 2, 3)</label>
+                <select id="ngram-size" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm font-mono text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="1">1 (Unigramas)</option>
+                  <option value="2" selected>2 (Bigramas)</option>
+                  <option value="3">3 (Trigramas)</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="ngram-mode" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Alcance del n-grama</label>
+                <select id="ngram-mode" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="exact" selected>Exacto (n)</option>
+                  <option value="up_to">Acumulativo (1..n)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label for="representation" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Esquema de ponderación</label>
+              <select id="representation" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                <option value="tfidf" selected>TF-IDF</option>
+                <option value="freq">Frecuencia (Conteo)</option>
+                <option value="binary">Binaria (Presencia)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-[#E2DDD5] text-[11px] font-mono text-[#57534E]">
+            El transformador se ajusta exclusivamente dentro de cada partición de entrenamiento.
+          </div>
+        </section>
+
+        <!-- Bloque C: Configuración y entrenamiento -->
+        <section id="sec-model" class="lg:col-span-7 bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 shadow-2xs flex flex-col justify-between space-y-5">
+          <div class="space-y-4">
+            <div class="pb-3 border-b border-[#E2DDD5]">
+              <span class="font-mono text-[11px] uppercase tracking-wider text-[#C2410C] font-semibold">Módulo 03 · Estimador &amp; Validación</span>
+              <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Configuración y entrenamiento</h2>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div>
+                <label for="classifier" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Clasificador</label>
+                <select id="classifier" onchange="renderHyperparams()" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="logreg">Regresión Logística</option>
+                  <option value="svm">SVM</option>
+                  <option value="rf">Random Forest</option>
+                  <option value="nb">Naive Bayes</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="test-size" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">Partición Train / Test</label>
+                <select id="test-size" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="0.2" selected>80% Train / 20% Test</option>
+                  <option value="0.25">75% Train / 25% Test</option>
+                  <option value="0.3">70% Train / 30% Test</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="cv-folds" class="block font-mono text-xs font-medium text-[#1C1917] mb-1.5">CV Estratificada</label>
+                <select id="cv-folds" class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-sm text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]">
+                  <option value="0">Sin CV</option>
+                  <option value="3">3 folds</option>
+                  <option value="5" selected>5 folds</option>
+                  <option value="10">10 folds</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Contenedor de hiperparámetros dinámicos por clasificador -->
+            <div id="hyperparams-box" class="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1"></div>
+          </div>
+
+          <div class="pt-4 border-t border-[#E2DDD5] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <span id="train-status" class="font-mono text-xs text-[#57534E]">Esperando ejecución del pipeline...</span>
+            <button id="btn-train" type="button" onclick="trainModel()" class="inline-flex items-center justify-center gap-2 bg-[#1D4ED8] hover:bg-blue-800 text-white font-semibold text-sm px-5 py-2.5 rounded-lg transition cursor-pointer">
+              <span>Ejecutar entrenamiento</span>
+            </button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- PESTAÑA 2: EVALUACIÓN (KPIs + Gráfica por clase + Matriz + CV)       -->
+    <!-- ===================================================================== -->
+    <div id="view-evaluacion" class="hidden space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white border border-[#E2DDD5] rounded-xl px-5 py-4">
+        <div>
+          <span class="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8] font-semibold">Reporte de Desempeño</span>
+          <h2 id="eval-title" class="text-lg font-bold text-[#1C1917]">Resultados del último experimento</h2>
+        </div>
+        <span id="eval-split-meta" class="font-mono text-xs text-[#57534E]">Sin modelo evaluado aún</span>
+      </div>
+
+      <!-- Métricas Globales y Macro -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">Accuracy</span>
+          <div id="kpi-acc" class="font-mono text-2xl font-bold text-[#1C1917] mt-1">--</div>
+        </div>
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">Precision Macro</span>
+          <div id="kpi-prec" class="font-mono text-2xl font-bold text-[#1D4ED8] mt-1">--</div>
+        </div>
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">Recall Macro</span>
+          <div id="kpi-rec" class="font-mono text-2xl font-bold text-[#C2410C] mt-1">--</div>
+        </div>
+        <div class="bg-white border border-[#E2DDD5] rounded-xl p-4">
+          <span class="font-mono text-[11px] text-[#57534E] uppercase">F1-Score Macro</span>
+          <div id="kpi-f1" class="font-mono text-2xl font-bold text-emerald-700 mt-1">--</div>
+        </div>
+      </div>
+
+      <!-- Gráfica de desempeño por clase -->
+      <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-[#1C1917]">Desempeño por clase (Precision / Recall / F1)</h3>
+          <span class="font-mono text-xs text-[#57534E]">% en partición test</span>
+        </div>
+        <div class="h-64">
+          <canvas id="classChart"></canvas>
+        </div>
+      </section>
+
+      <!-- Matriz de Confusión y Validación Cruzada -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-3 overflow-x-auto">
+          <h3 class="text-base font-bold text-[#1C1917]">Matriz de confusión</h3>
+          <div id="confusion-matrix-container" class="font-mono text-xs text-[#57534E]">Entrena un modelo para visualizar la matriz.</div>
+        </section>
+
+        <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-3">
+          <h3 class="text-base font-bold text-[#1C1917]">Validación cruzada estratificada</h3>
+          <div id="cv-container" class="text-xs sm:text-sm text-[#57534E]">Entrena un modelo para ver los scores por fold.</div>
+        </section>
+      </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- PESTAÑA 3: COMPARADOR & PREDICCIÓN                                    -->
+    <!-- ===================================================================== -->
+    <div id="view-comparador" class="hidden space-y-6">
+
+      <!-- Historial de experimentos -->
+      <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#C2410C] font-semibold">Registro de Sesión</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Comparación de experimentos</h2>
+          </div>
+          <span class="font-mono text-xs text-[#57534E]">Clic en fila para inspeccionar</span>
+        </div>
+
+        <div class="overflow-x-auto border border-[#E2DDD5] rounded-lg">
+          <table class="w-full text-left border-collapse text-xs sm:text-sm">
+            <thead class="bg-[#FAF8F5] border-b border-[#E2DDD5] font-mono text-[11px] uppercase text-[#57534E]">
+              <tr>
+                <th class="px-4 py-3">ID</th>
+                <th class="px-4 py-3">Clasificador</th>
+                <th class="px-4 py-3">Características</th>
+                <th class="px-4 py-3">Accuracy</th>
+                <th class="px-4 py-3">F1 Macro</th>
+                <th class="px-4 py-3">CV Media</th>
+              </tr>
+            </thead>
+            <tbody id="history-tbody" class="divide-y divide-[#E2DDD5]">
+              <tr><td colspan="6" class="px-4 py-5 text-center text-[#57534E] font-mono text-xs">Aún no hay experimentos registrados en esta sesión.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Predicción de nuevos textos (individual y CSV por lotes) -->
+      <section class="bg-white border border-[#E2DDD5] rounded-xl p-5 sm:p-6 space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#E2DDD5]">
+          <div>
+            <span class="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8] font-semibold">Inferencia</span>
+            <h2 class="text-lg font-bold text-[#1C1917] mt-0.5">Predicción de nuevos textos</h2>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <label for="predict-model-select" class="font-mono text-xs text-[#57534E]">Modelo:</label>
+            <select id="predict-model-select" class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-1.5 text-xs sm:text-sm font-mono text-[#1C1917] focus:outline-none focus:border-[#1D4ED8]"></select>
+          </div>
+        </div>
+
+        <!-- Predicción individual -->
+        <div class="space-y-3">
+          <label for="single-text-input" class="block font-mono text-xs font-medium text-[#1C1917]">Texto individual</label>
+          <textarea id="single-text-input" rows="3" placeholder="Escribe un texto para clasificarlo con el modelo entrenado..." class="w-full rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-3 text-sm text-[#1C1917] focus:bg-white focus:outline-none focus:border-[#1D4ED8]"></textarea>
+          <button type="button" onclick="predictSingleText()" class="bg-[#1C1917] hover:bg-stone-800 text-white font-semibold text-xs sm:text-sm px-4 py-2 rounded-lg transition cursor-pointer">
+            Predecir texto
+          </button>
+
+          <div id="single-pred-result" class="hidden rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] p-4 space-y-2.5"></div>
+        </div>
+
+        <!-- Predicción por lotes CSV -->
+        <div class="pt-5 border-t border-[#E2DDD5] space-y-3">
+          <div class="font-mono text-xs font-semibold text-[#1C1917]">Predicción por lotes (CSV sin etiquetar)</div>
+          <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+            <input type="text" id="batch-col-name" placeholder="Columna de texto (ej. text)" class="rounded-lg border border-[#E2DDD5] bg-[#FAF8F5] px-3 py-2 text-xs sm:text-sm font-mono text-[#1C1917] focus:bg-white focus:outline-none focus:border-[#1D4ED8]" />
+            <input type="file" id="batch-csv-input" accept=".csv" class="text-xs text-[#57534E] file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-[#E2DDD5] file:text-xs file:font-mono file:bg-white file:text-[#1C1917] hover:file:bg-stone-100" />
+            <button type="button" onclick="predictBatchCsv()" class="bg-[#C2410C] hover:bg-[#9A3412] text-white font-semibold text-xs sm:text-sm px-4 py-2 rounded-lg transition cursor-pointer shrink-0">
+              Predecir CSV
+            </button>
+          </div>
+
+          <div id="batch-pred-table" class="overflow-x-auto"></div>
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+</body>
+</html>
