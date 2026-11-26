@@ -444,6 +444,34 @@
     const PALETTE = ['#C2410C', '#1D4ED8', '#0F766E', '#B45309', '#4338CA', '#BE123C', '#3F6212'];
     let classChartInstance = null;
     const experimentsStore = {};
+    let activePollTimer = null;
+    let activeClockTimer = null;
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatElapsed(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds) || 0));
+      const mins = Math.floor(total / 60);
+      const secs = total % 60;
+      return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    }
+
+    function clearTrainingTimers() {
+      if (activePollTimer) {
+        clearInterval(activePollTimer);
+        activePollTimer = null;
+      }
+      if (activeClockTimer) {
+        clearInterval(activeClockTimer);
+        activeClockTimer = null;
+      }
+    }
 
     // Notificación discreta en esquina inferior derecha (sin usar alert())
     function notify(message, isError = false) {
@@ -536,7 +564,7 @@
     }
     renderHyperparams();
 
-    // 1. Subir archivo CSV mediante JSON/FormData a /api/upload-csv
+    // 1. Subir archivo CSV mediante FormData a /api/upload-csv
     document.getElementById('csv-input').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -558,15 +586,15 @@
         labelSel.innerHTML = '';
 
         data.columns.forEach((col, i) => {
-          textSel.innerHTML += `<option value="${col}" ${i === 0 ? 'selected' : ''}>${col}</option>`;
-          labelSel.innerHTML += `<option value="${col}" ${i === data.columns.length - 1 ? 'selected' : ''}>${col}</option>`;
+          textSel.innerHTML += `<option value="${escapeHtml(col)}" ${i === 0 ? 'selected' : ''}>${escapeHtml(col)}</option>`;
+          labelSel.innerHTML += `<option value="${escapeHtml(col)}" ${i === data.columns.length - 1 ? 'selected' : ''}>${escapeHtml(col)}</option>`;
         });
 
         const box = document.getElementById('column-selector-box');
         box.classList.remove('hidden');
         box.classList.add('grid');
 
-        notify(`Archivo "${data.filename}" cargado (${data.rows.toLocaleString()} filas).`);
+        notify(`Archivo "${data.filename}" cargado (${Number(data.rows || 0).toLocaleString()} filas).`);
         inspectDataset();
       } catch (err) {
         notify('Error de red al subir el CSV.', true);
@@ -594,119 +622,200 @@
         }
 
         document.getElementById('dataset-summary').classList.remove('hidden');
-        document.getElementById('stat-clean').textContent = data.total_clean.toLocaleString();
-        document.getElementById('stat-classes').textContent = data.classes.length;
-        document.getElementById('stat-missing').textContent = data.missing_rows.toLocaleString();
-        document.getElementById('stat-duplicates').textContent = data.duplicate_rows.toLocaleString();
-        document.getElementById('pos-backend-badge').textContent = data.pos_backend ? `POS: ${data.pos_backend}` : '';
+        document.getElementById('stat-clean').textContent = Number(data.total_clean || 0).toLocaleString();
+        document.getElementById('stat-classes').textContent = (data.classes || []).length;
+        document.getElementById('stat-missing').textContent = Number(data.missing_rows || 0).toLocaleString();
+        document.getElementById('stat-duplicates').textContent = Number(data.duplicate_rows || 0).toLocaleString();
 
         const bar = document.getElementById('class-bar');
         const legend = document.getElementById('class-legend');
         bar.innerHTML = '';
         legend.innerHTML = '';
 
-        data.distribution.forEach((item, idx) => {
+        (data.distribution || []).forEach((item, idx) => {
           const color = PALETTE[idx % PALETTE.length];
-          bar.innerHTML += `<div style="width:${item.percentage}%; background:${color}" title="${item.label}: ${item.percentage}%"></div>`;
-          legend.innerHTML += `<span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-xs inline-block" style="background:${color}"></span><strong>${item.label}:</strong> ${item.count.toLocaleString()} (${item.percentage}%)</span>`;
+          const pct = Number(item.percentage || 0);
+          bar.innerHTML += `<div style="width:${pct}%; background-color:${color};" title="${escapeHtml(item.label)}: ${pct}%"></div>`;
+          legend.innerHTML += `
+            <span class="inline-flex items-center gap-1.5">
+              <span class="w-2.5 h-2.5 rounded-xs inline-block" style="background-color:${color};"></span>
+              <span>${escapeHtml(item.label)}: ${Number(item.count || 0).toLocaleString()} (${pct}%)</span>
+            </span>`;
         });
       } catch (err) {
-        notify('Error de comunicación al inspeccionar el dataset.', true);
+        notify('Error de red al inspeccionar el dataset.', true);
       }
     }
 
-    // 2. Entrenar modelo enviando configuración JSON a /api/train
-    async function trainModel() {
-      const textCol = document.getElementById('text-col').value;
-      const labelCol = document.getElementById('label-col').value;
-      if (!textCol || !labelCol) {
-        notify('Primero sube un CSV y selecciona las columnas de texto y etiqueta.', true);
-        return;
+    function collectHyperparams(clf) {
+      if (clf === 'logreg') {
+        return {
+          penalty: document.getElementById('param-penalty')?.value || 'l2',
+          C: parseFloat(document.getElementById('param-c')?.value || '1.0')
+        };
       }
+      if (clf === 'svm') {
+        return {
+          kernel: document.getElementById('param-kernel')?.value || 'linear',
+          C: parseFloat(document.getElementById('param-c')?.value || '1.0')
+        };
+      }
+      if (clf === 'rf') {
+        const maxDepthRaw = document.getElementById('param-maxdepth')?.value;
+        return {
+          n_estimators: parseInt(document.getElementById('param-estimators')?.value || '100', 10),
+          max_depth: maxDepthRaw ? parseInt(maxDepthRaw, 10) : null
+        };
+      }
+      if (clf === 'nb') {
+        return {
+          alpha: parseFloat(document.getElementById('param-alpha')?.value || '1.0')
+        };
+      }
+      return {};
+    }
+
+    async function trainModel() {
+      clearTrainingTimers();
 
       const clf = document.getElementById('classifier').value;
-      const params = {};
-
-      if (clf === 'logreg') {
-        params.penalty = document.getElementById('param-penalty').value;
-        params.C = parseFloat(document.getElementById('param-c').value);
-      } else if (clf === 'svm') {
-        params.kernel = document.getElementById('param-kernel').value;
-        params.C = parseFloat(document.getElementById('param-c').value);
-      } else if (clf === 'rf') {
-        params.n_estimators = parseInt(document.getElementById('param-estimators').value, 10);
-        const md = document.getElementById('param-maxdepth').value;
-        if (md) params.max_depth = parseInt(md, 10);
-      } else if (clf === 'nb') {
-        params.alpha = parseFloat(document.getElementById('param-alpha').value);
-      }
-
       const payload = {
-        text_col: textCol,
-        label_col: labelCol,
+        text_col: document.getElementById('text-col').value,
+        label_col: document.getElementById('label-col').value,
         feature_type: document.getElementById('feature-type').value,
         ngram_size: parseInt(document.getElementById('ngram-size').value, 10),
-        ngram_mode: document.getElementById('ngram-mode').value,
+        ngram_scope: document.getElementById('ngram-mode').value,
         representation: document.getElementById('representation').value,
         classifier: clf,
         test_size: parseFloat(document.getElementById('test-size').value),
         cv_folds: parseInt(document.getElementById('cv-folds').value, 10),
-        drop_na: document.getElementById('opt-drop-na').checked,
-        drop_duplicates: document.getElementById('opt-drop-dup').checked,
-        params
+        params: collectHyperparams(clf)
       };
 
       const btn = document.getElementById('btn-train');
-      const status = document.getElementById('train-status');
+      const statusEl = document.getElementById('train-status');
+
       btn.disabled = true;
-      btn.textContent = 'Entrenando...';
-      status.textContent = 'Ejecutando pipeline en el servidor...';
+      btn.classList.add('opacity-60', 'cursor-not-allowed');
+
+      let currentStage = 'preparando datos';
+      let serverElapsed = 0;
+      let lastSyncAt = Date.now();
+
+      const renderProgress = () => {
+        const sinceSync = (Date.now() - lastSyncAt) / 1000;
+        const elapsedText = formatElapsed(serverElapsed + sinceSync);
+        statusEl.textContent = `Etapa: ${currentStage} · Tiempo: ${elapsedText}`;
+        btn.innerHTML = `<span>Entrenando (${elapsedText})...</span>`;
+      };
+
+      renderProgress();
 
       try {
-        const res = await fetch('/api/train', {
+        const startRes = await fetch('/api/train', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Error durante el entrenamiento.');
+        const startData = await startRes.json();
+        if (!startRes.ok || !startData.job_id) {
+          throw new Error(startData.detail || 'No se pudo iniciar el entrenamiento.');
+        }
 
-        experimentsStore[data.id] = data;
-        renderResults(data);
-        addExperimentRow(data);
+        const jobId = startData.job_id;
+        currentStage = startData.stage || 'preparando datos';
+        serverElapsed = Number(startData.elapsed_seconds || 0);
+        lastSyncAt = Date.now();
+        renderProgress();
 
-        status.textContent = `${data.id} listo · ${data.metrics.accuracy}% accuracy`;
-        notify(`Experimento ${data.id} finalizado (Accuracy: ${data.metrics.accuracy}%, F1 Macro: ${data.metrics.f1_macro}%).`);
-        setActiveTab('evaluacion');
+        activeClockTimer = setInterval(renderProgress, 500);
+
+        activePollTimer = setInterval(async () => {
+          try {
+            const stRes = await fetch(`/api/train-status/${encodeURIComponent(jobId)}`);
+            const stData = await stRes.json();
+
+            if (!stRes.ok) {
+              throw new Error(stData.detail || 'Error al consultar el estado del entrenamiento.');
+            }
+
+            currentStage = stData.stage || currentStage;
+            serverElapsed = Number(stData.elapsed_seconds ?? serverElapsed);
+            lastSyncAt = Date.now();
+            renderProgress();
+
+            if (stData.status === 'done') {
+              clearTrainingTimers();
+              const result = stData.result;
+              experimentsStore[result.id] = result;
+              renderEvaluation(result);
+              refreshHistoryAndPredictor(result.id);
+
+              statusEl.textContent = `Etapa: completado · Tiempo: ${formatElapsed(serverElapsed)} (${result.id})`;
+              btn.disabled = false;
+              btn.classList.remove('opacity-60', 'cursor-not-allowed');
+              btn.innerHTML = `<span>Ejecutar entrenamiento</span>`;
+
+              notify(`Experimento ${result.id} completado.`);
+              setActiveTab('evaluacion');
+            } else if (stData.status === 'error') {
+              clearTrainingTimers();
+              const errMsg = stData.error || 'Error durante el entrenamiento.';
+              statusEl.textContent = `Etapa: error · Tiempo: ${formatElapsed(serverElapsed)} — ${errMsg}`;
+              btn.disabled = false;
+              btn.classList.remove('opacity-60', 'cursor-not-allowed');
+              btn.innerHTML = `<span>Ejecutar entrenamiento</span>`;
+              notify(errMsg, true);
+            }
+          } catch (pollErr) {
+            clearTrainingTimers();
+            const msg = pollErr.message || 'Error al consultar el estado del entrenamiento.';
+            statusEl.textContent = `Etapa: error — ${msg}`;
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+            btn.innerHTML = `<span>Ejecutar entrenamiento</span>`;
+            notify(msg, true);
+          }
+        }, 1500);
       } catch (err) {
-        notify(err.message, true);
-        status.textContent = 'Error en la ejecución del pipeline.';
-      } finally {
+        clearTrainingTimers();
+        const msg = err.message || 'Error de red al iniciar entrenamiento.';
+        statusEl.textContent = `Etapa: error — ${msg}`;
         btn.disabled = false;
-        btn.textContent = 'Ejecutar entrenamiento';
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        btn.innerHTML = `<span>Ejecutar entrenamiento</span>`;
+        notify(msg, true);
       }
     }
 
-    function renderResults(data) {
-      document.getElementById('eval-title').textContent = `${data.id} · ${data.classifier} (${data.features})`;
-      document.getElementById('eval-split-meta').textContent = `Train: ${data.train_samples} · Test: ${data.test_samples} · F1 Weighted: ${data.metrics.f1_weighted ?? '--'}%`;
+    function renderEvaluation(exp) {
+      document.getElementById('eval-title').textContent = `${exp.id} · ${exp.classifier} (${exp.features})`;
+      document.getElementById('eval-split-meta').textContent = `Train: ${Number(exp.train_samples || 0).toLocaleString()} · Test: ${Number(exp.test_samples || 0).toLocaleString()}`;
 
-      document.getElementById('kpi-acc').textContent = `${data.metrics.accuracy}%`;
-      document.getElementById('kpi-prec').textContent = `${data.metrics.precision_macro}%`;
-      document.getElementById('kpi-rec').textContent = `${data.metrics.recall_macro}%`;
-      document.getElementById('kpi-f1').textContent = `${data.metrics.f1_macro}%`;
+      document.getElementById('kpi-acc').textContent = `${exp.metrics.accuracy}%`;
+      document.getElementById('kpi-prec').textContent = `${exp.metrics.precision_macro}%`;
+      document.getElementById('kpi-rec').textContent = `${exp.metrics.recall_macro}%`;
+      document.getElementById('kpi-f1').textContent = `${exp.metrics.f1_macro}%`;
+
+      // Gráfica por clase
+      const labels = (exp.per_class || []).map((c) => c.label);
+      const precData = (exp.per_class || []).map((c) => c.precision);
+      const recData = (exp.per_class || []).map((c) => c.recall);
+      const f1Data = (exp.per_class || []).map((c) => c.f1);
 
       const ctx = document.getElementById('classChart').getContext('2d');
-      if (classChartInstance) classChartInstance.destroy();
+      if (classChartInstance) {
+        classChartInstance.destroy();
+      }
       classChartInstance = new Chart(ctx, {
         type: 'bar',
         data: {
-          labels: data.per_class.map((c) => c.label),
+          labels,
           datasets: [
-            { label: 'Precision %', data: data.per_class.map((c) => c.precision), backgroundColor: '#1D4ED8', borderRadius: 4 },
-            { label: 'Recall %', data: data.per_class.map((c) => c.recall), backgroundColor: '#C2410C', borderRadius: 4 },
-            { label: 'F1-Score %', data: data.per_class.map((c) => c.f1), backgroundColor: '#0F766E', borderRadius: 4 }
-          ]
+            { label: 'Precision (%)', data: precData, backgroundColor: '#1D4ED8' },
+            { label: 'Recall (%)', data: recData, backgroundColor: '#C2410C' },
+            { label: 'F1-Score (%)', data: f1Data, backgroundColor: '#0F766E' },
+          ],
         },
         options: {
           responsive: true,
@@ -717,76 +826,81 @@
         }
       });
 
-      let cmHtml = '<table class="mono text-xs border-collapse w-full text-center"><thead><tr><th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5]">Real \\ Pred</th>';
-      data.classes.forEach((c) => {
-        cmHtml += `<th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5] text-[#1C1917]">${c}</th>`;
+      // Matriz de confusión
+      const cmContainer = document.getElementById('confusion-matrix-container');
+      const classes = exp.classes || [];
+      const cm = exp.confusion_matrix || [];
+      let cmHtml = '<table class="border-collapse border border-[#E2DDD5] text-center"><thead><tr><th class="border border-[#E2DDD5] px-3 py-2 bg-[#FAF8F5]">Real \\ Pred</th>';
+      classes.forEach((cls) => {
+        cmHtml += `<th class="border border-[#E2DDD5] px-3 py-2 bg-[#FAF8F5]">${escapeHtml(cls)}</th>`;
       });
       cmHtml += '</tr></thead><tbody>';
 
-      data.confusion_matrix.forEach((row, i) => {
-        cmHtml += `<tr><th class="p-2 border border-[#E2DDD5] bg-[#FAF8F5] text-left text-[#1C1917]">${data.classes[i]}</th>`;
-        row.forEach((val, j) => {
-          const cellClass = i === j
-            ? 'bg-blue-50 font-bold text-[#1D4ED8]'
-            : 'bg-white text-[#1C1917]';
-          cmHtml += `<td class="p-2 border border-[#E2DDD5] ${cellClass}">${val}</td>`;
+      cm.forEach((row, rIdx) => {
+        cmHtml += `<tr><td class="border border-[#E2DDD5] px-3 py-2 font-semibold bg-[#FAF8F5]">${escapeHtml(classes[rIdx] || '')}</td>`;
+        row.forEach((val, cIdx) => {
+          const isDiag = rIdx === cIdx;
+          cmHtml += `<td class="border border-[#E2DDD5] px-3 py-2 ${isDiag ? 'bg-emerald-50 font-bold text-emerald-900' : 'text-[#1C1917]'}">${Number(val || 0).toLocaleString()}</td>`;
         });
         cmHtml += '</tr>';
       });
       cmHtml += '</tbody></table>';
-      document.getElementById('confusion-matrix-container').innerHTML = cmHtml;
+      cmContainer.innerHTML = cmHtml;
 
-      const cvBox = document.getElementById('cv-container');
-      if (data.cv) {
-        cvBox.innerHTML = `
+      // Validación cruzada
+      const cvContainer = document.getElementById('cv-container');
+      if (exp.cv) {
+        const foldsBadges = (exp.cv.scores || [])
+          .map((sc, i) => `<span class="px-2.5 py-1 rounded bg-[#FAF8F5] border border-[#E2DDD5] font-mono text-xs">Fold ${i + 1}: <strong>${sc}%</strong></span>`)
+          .join('');
+        cvContainer.innerHTML = `
           <div class="space-y-3">
-            <div class="flex flex-wrap gap-2">
-              ${data.cv.scores.map((s, idx) => `<span class="font-mono text-xs bg-[#FAF8F5] text-[#1C1917] border border-[#E2DDD5] px-2.5 py-1 rounded-md">Fold ${idx + 1}: <strong>${s}%</strong></span>`).join('')}
-            </div>
-            <div class="font-mono text-xs sm:text-sm pt-3 border-t border-[#E2DDD5] text-[#1C1917]">
-              Promedio: <strong class="text-[#1D4ED8]">${data.cv.mean}%</strong> · Desviación estándar: <strong class="text-[#C2410C]">${data.cv.std} pp</strong>
-            </div>
+            <div class="font-mono text-xs text-[#1C1917]">Media (${exp.cv.folds} folds): <strong>${exp.cv.mean}%</strong> ± ${exp.cv.std}%</div>
+            <div class="flex flex-wrap gap-2">${foldsBadges}</div>
           </div>`;
       } else {
-        cvBox.textContent = 'Validación cruzada desactivada en este experimento.';
+        cvContainer.innerHTML = '<span class="font-mono text-xs text-[#57534E]">Validación cruzada desactivada para este experimento.</span>';
       }
     }
 
-    // Agregar fila al historial y actualizar selector de modelos para predicción
-    function addExperimentRow(data) {
+    function refreshHistoryAndPredictor(selectedId = null) {
       const tbody = document.getElementById('history-tbody');
-      if (data.id === 'EXP-01') tbody.innerHTML = '';
+      const select = document.getElementById('predict-model-select');
+      const ids = Object.keys(experimentsStore);
 
-      const cvText = data.cv ? `${data.cv.mean}% (±${data.cv.std})` : 'Sin CV';
-      tbody.innerHTML += `
-        <tr onclick="inspectSavedExperiment('${data.id}')" class="hover:bg-[#FAF8F5] cursor-pointer transition">
-          <td class="px-4 py-3 font-mono font-bold text-[#C2410C]">${data.id}</td>
-          <td class="px-4 py-3 font-medium text-[#1C1917]">${data.classifier}</td>
-          <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${data.features}</td>
-          <td class="px-4 py-3 font-mono font-semibold text-[#1C1917]">${data.metrics.accuracy}%</td>
-          <td class="px-4 py-3 font-mono font-semibold text-[#1D4ED8]">${data.metrics.f1_macro}%</td>
-          <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${cvText}</td>
-        </tr>`;
+      if (ids.length === 0) return;
 
-      const sel = document.getElementById('predict-model-select');
-      sel.innerHTML += `<option value="${data.id}" selected>${data.id} · ${data.classifier} (${data.metrics.accuracy}%)</option>`;
+      tbody.innerHTML = ids.map((id) => {
+        const item = experimentsStore[id];
+        const cvMean = item.cv ? `${item.cv.mean}%` : '—';
+        return `
+          <tr onclick="selectExperiment('${escapeHtml(id)}')" class="hover:bg-[#FAF8F5] cursor-pointer transition">
+            <td class="px-4 py-3 font-mono font-semibold text-[#1D4ED8]">${escapeHtml(id)}</td>
+            <td class="px-4 py-3">${escapeHtml(item.classifier)}</td>
+            <td class="px-4 py-3 font-mono text-xs text-[#57534E]">${escapeHtml(item.features)}</td>
+            <td class="px-4 py-3 font-mono font-semibold">${item.metrics.accuracy}%</td>
+            <td class="px-4 py-3 font-mono font-semibold text-emerald-700">${item.metrics.f1_macro}%</td>
+            <td class="px-4 py-3 font-mono">${cvMean}</td>
+          </tr>`;
+      }).join('');
+
+      const targetId = selectedId || ids[ids.length - 1];
+      select.innerHTML = ids.map((id) => `<option value="${escapeHtml(id)}" ${id === targetId ? 'selected' : ''}>${escapeHtml(id)} · ${escapeHtml(experimentsStore[id].classifier)}</option>`).join('');
     }
 
-    function inspectSavedExperiment(expId) {
-      const exp = experimentsStore[expId];
+    function selectExperiment(id) {
+      const exp = experimentsStore[id];
       if (!exp) return;
-      renderResults(exp);
+      renderEvaluation(exp);
+      document.getElementById('predict-model-select').value = id;
       setActiveTab('evaluacion');
-      notify(`Mostrando evaluación de ${expId}.`);
     }
 
-    // 3. Predicción individual mediante JSON a /api/predict-text
     async function predictSingleText() {
       const expId = document.getElementById('predict-model-select').value;
       const text = document.getElementById('single-text-input').value.trim();
-
       if (!expId) {
-        notify('Entrena al menos un modelo antes de predecir.', true);
+        notify('Entrena un modelo primero.', true);
         return;
       }
       if (!text) {
@@ -802,45 +916,37 @@
         });
         const data = await res.json();
         if (!res.ok) {
-          notify(data.detail || 'Error al predecir el texto.', true);
+          notify(data.detail || 'Error al predecir texto.', true);
           return;
         }
 
         const box = document.getElementById('single-pred-result');
         box.classList.remove('hidden');
+        const probsHtml = (data.probabilities || [])
+          .map((p) => `<span class="px-2.5 py-1 rounded bg-white border border-[#E2DDD5] font-mono text-xs">${escapeHtml(p.label)}: <strong>${p.probability}%</strong></span>`)
+          .join('');
+
         box.innerHTML = `
-          <div class="flex items-center justify-between text-xs sm:text-sm">
-            <span class="font-mono text-[#57534E]">Modelo: <strong>${data.experiment_id}</strong></span>
-            <span class="font-mono font-bold text-[#C2410C]">Clase predicha: ${data.predicted_class}</span>
-          </div>
-          <div class="space-y-2 pt-2">
-            ${data.probabilities.map((p) => `
-              <div class="flex items-center gap-3 text-xs">
-                <span class="w-28 truncate font-mono font-medium text-[#1C1917]">${p.label}</span>
-                <div class="flex-1 h-2 bg-stone-200 rounded-full overflow-hidden">
-                  <div class="h-full bg-[#1D4ED8]" style="width:${p.probability}%"></div>
-                </div>
-                <span class="font-mono w-14 text-right text-[#1C1917]">${p.probability}%</span>
-              </div>
-            `).join('')}
-          </div>`;
+          <div class="font-mono text-xs text-[#57534E]">Clase predicha (${escapeHtml(data.experiment_id)}):</div>
+          <div class="text-base font-bold text-[#1D4ED8]">${escapeHtml(data.predicted_class)}</div>
+          <div class="flex flex-wrap gap-2 pt-1">${probsHtml}</div>`;
       } catch (err) {
-        notify('Error de red al predecir el texto.', true);
+        notify('Error de red al predecir texto.', true);
       }
     }
 
-    // 4. Predicción por lotes CSV a /api/predict-csv
     async function predictBatchCsv() {
       const expId = document.getElementById('predict-model-select').value;
-      const colName = document.getElementById('batch-col-name').value.trim();
-      const file = document.getElementById('batch-csv-input').files[0];
+      const textCol = document.getElementById('batch-col-name').value.trim();
+      const fileInput = document.getElementById('batch-csv-input');
+      const file = fileInput.files[0];
 
       if (!expId) {
-        notify('Selecciona un modelo entrenado.', true);
+        notify('Entrena un modelo primero.', true);
         return;
       }
-      if (!colName || !file) {
-        notify('Indica el nombre de la columna de texto y selecciona un CSV.', true);
+      if (!textCol || !file) {
+        notify('Indica la columna de texto y selecciona un archivo CSV.', true);
         return;
       }
 
@@ -848,28 +954,43 @@
       formData.append('file', file);
 
       try {
-        const res = await fetch(`/api/predict-csv?experiment_id=${encodeURIComponent(expId)}&text_col=${encodeURIComponent(colName)}`, {
-          method: 'POST',
-          body: formData
-        });
+        const url = `/api/predict-csv?experiment_id=${encodeURIComponent(expId)}&text_col=${encodeURIComponent(textCol)}`;
+        const res = await fetch(url, { method: 'POST', body: formData });
         const data = await res.json();
         if (!res.ok) {
-          notify(data.detail || 'Error al predecir el CSV.', true);
+          notify(data.detail || 'Error al predecir CSV.', true);
           return;
         }
 
-        let html = `<div class="font-mono text-xs text-[#57534E] mt-3 mb-1.5">Predicciones generadas: ${data.total} filas (mostrando hasta 50)</div>`;
-        html += `<table class="w-full text-xs text-left border border-[#E2DDD5] bg-white"><thead class="bg-[#FAF8F5] font-mono text-[#57534E]"><tr><th class="p-2 border border-[#E2DDD5]">#</th><th class="p-2 border border-[#E2DDD5]">Texto</th><th class="p-2 border border-[#E2DDD5]">Clase predicha</th><th class="p-2 border border-[#E2DDD5]">Confianza</th></tr></thead><tbody>`;
+        const previewRows = (data.predictions || []).slice(0, 30);
+        let html = `
+          <p class="font-mono text-xs text-[#57534E] mb-2">Total predichos: ${Number(data.total || 0).toLocaleString()} (mostrando hasta 30 filas)</p>
+          <table class="w-full text-left border-collapse border border-[#E2DDD5] text-xs">
+            <thead class="bg-[#FAF8F5] font-mono uppercase text-[#57534E]">
+              <tr>
+                <th class="border border-[#E2DDD5] px-3 py-2">#</th>
+                <th class="border border-[#E2DDD5] px-3 py-2">Texto</th>
+                <th class="border border-[#E2DDD5] px-3 py-2">Predicción</th>
+                <th class="border border-[#E2DDD5] px-3 py-2">Confianza</th>
+              </tr>
+            </thead>
+            <tbody>`;
 
-        data.predictions.slice(0, 50).forEach((r) => {
-          html += `<tr><td class="p-2 border border-[#E2DDD5] font-mono">${r.row}</td><td class="p-2 border border-[#E2DDD5] text-[#1C1917]">${r.text}</td><td class="p-2 border border-[#E2DDD5] font-mono font-bold text-[#1D4ED8]">${r.predicted_class}</td><td class="p-2 border border-[#E2DDD5] font-mono">${r.confidence}%</td></tr>`;
+        previewRows.forEach((r) => {
+          html += `
+            <tr>
+              <td class="border border-[#E2DDD5] px-3 py-2 font-mono">${r.row}</td>
+              <td class="border border-[#E2DDD5] px-3 py-2">${escapeHtml(r.text)}</td>
+              <td class="border border-[#E2DDD5] px-3 py-2 font-mono font-semibold text-[#1D4ED8]">${escapeHtml(r.predicted_class)}</td>
+              <td class="border border-[#E2DDD5] px-3 py-2 font-mono">${r.confidence}%</td>
+            </tr>`;
         });
 
         html += '</tbody></table>';
         document.getElementById('batch-pred-table').innerHTML = html;
-        notify(`Predicción por lotes completada (${data.total} textos).`);
+        notify(`Predicción por lotes completada (${data.total} filas).`);
       } catch (err) {
-        notify('Error de red al predecir el CSV.', true);
+        notify('Error de red al predecir CSV.', true);
       }
     }
   </script>
