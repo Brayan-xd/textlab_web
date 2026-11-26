@@ -116,11 +116,11 @@ def serve_frontend():
 @app.post("/api/upload-csv")
 async def upload_csv(file: UploadFile = File(...)):
     try:
-        content= await file.read()
+        content = await file.read()
         try:
-            df= pd.read_csv(io.BytesIO(content), encoding="utf-8")
+            df = pd.read_csv(io.BytesIO(content), encoding="utf-8")
         except UnicodeDecodeError:
-            df= pd.read_csv(io.BytesIO(content), encoding="latin-1")
+            df = pd.read_csv(io.BytesIO(content), encoding="latin-1")
 
         SESSION_STATE["df"] = df
         SESSION_STATE["filename"] = file.filename
@@ -191,7 +191,7 @@ def train_model(req: TrainRequest):
     if len(classes) < 2:
         raise HTTPException(status_code=400, detail="El dataset debe tener al menos 2 clases.")
 
-    # Vectorizador según representación y tamaño de n-grama
+    #Vectorizador según representación y tamaño de n-grama
     ngram_range = (req.ngram_size, req.ngram_size)
     if req.representation == "tfidf":
         vectorizer = TfidfVectorizer(ngram_range=ngram_range, max_features=10000)
@@ -200,7 +200,7 @@ def train_model(req: TrainRequest):
     else:
         vectorizer = CountVectorizer(ngram_range=ngram_range, binary=False, max_features=10000)
 
-    # Clasificador y sus hiperparámetros
+    #Clasificador y sus hiperparámetros
     p = req.params
     if req.classifier == "logreg":
         penalty = p.get("penalty", "l2")
@@ -235,7 +235,7 @@ def train_model(req: TrainRequest):
     else:
         raise HTTPException(status_code=400, detail="Clasificador no soportado.")
 
-    # Pipeline completo: evita data leakage en Train/Test y en Cross-Validation
+    #Pipeline completo: evita data leakage en Train/Test y en Cross-Validation
     pipeline = Pipeline([
         ("linguistic", LinguisticPreprocessor(feature_type=req.feature_type)),
         ("vectorizer", vectorizer),
@@ -246,7 +246,7 @@ def train_model(req: TrainRequest):
         X, y, test_size=req.test_size, stratify=y, random_state=42
     )
 
-    # Validación cruzada estratificada solo sobre el conjunto de entrenamiento
+    #Validación cruzada estratificada solo sobre el conjunto de entrenamiento
     cv_result = None
     if req.cv_folds in [3, 5, 10]:
         skf = StratifiedKFold(n_splits=req.cv_folds, shuffle=True, random_state=42)
