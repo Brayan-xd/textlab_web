@@ -23,6 +23,16 @@ La aplicación está diseñada para trabajar con diferentes conjuntos de datos y
 - Registro y comparación de experimentos durante la sesión.
 - Predicción de textos individuales y predicción por lotes a partir de un CSV sin etiquetas.
 
+## Consideraciones sobre el volumen de datos
+
+TextLab está diseñado para trabajar con diferentes conjuntos de datos de clasificación de textos, sin depender de una cantidad fija de registros o de clases predeterminadas. Sin embargo, es importante considerar que el rendimiento de la aplicación depende de los recursos disponibles en el equipo o servidor donde se ejecuta.
+
+Actualmente, el sistema procesa los archivos CSV utilizando memoria RAM y realiza el entrenamiento de los modelos mediante procesamiento local en Python. Por esta razón, cuando se utilizan conjuntos de datos demasiado grandes, la carga, inspección y entrenamiento pueden volverse lentos o incluso superar la capacidad de memoria y procesamiento del servidor donde está desplegada la aplicación.
+
+Para las pruebas con conjuntos de datos de mayor tamaño, se recomienda ejecutar TextLab en un entorno local que cuente con recursos suficientes de memoria RAM y procesamiento. Esto permite aprovechar los recursos disponibles del equipo en lugar de depender de las limitaciones del servidor de despliegue.
+
+**Nota:** No existe un límite fijo de registros establecido en el código, por lo que la cantidad de datos que puede procesarse dependerá de las características del conjunto de datos y de los recursos disponibles en el entorno de ejecución.
+
 ## Tecnologías utilizadas
 
 ### Backend
