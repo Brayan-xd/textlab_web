@@ -8,6 +8,7 @@ La aplicación está diseñada para trabajar con diferentes conjuntos de datos y
 
 - **Repositorio de GitHub:** [https://github.com/Brayan-xd/textlab_web](https://github.com/Brayan-xd/textlab_web)
 - **Carpeta de evidencias:** [https://github.com/Brayan-xd/textlab_web/tree/main/evidencias](https://github.com/Brayan-xd/textlab_web/tree/main/evidencias)
+- **Aplicación Web:** https://textlabweb-production.up.railway.app/
 
 ## Funcionalidades principales
 
