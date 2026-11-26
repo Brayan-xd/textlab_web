@@ -93,16 +93,24 @@ Tailwind CSS, Chart.js y las tipografías se cargan desde servicios externos, po
 4. Instala las dependencias:
 
    ```bash
+   pip install -r requirements.txt
+   ```
+   
+
+   O de no funcionar
+
+
+   ```bash
    pip install fastapi "uvicorn[standard]" python-multipart numpy pandas nltk scikit-learn
    ```
 
-5. Ejecuta el servidor desde la carpeta donde se encuentran `main.py` e `index.html`:
+4. Ejecuta el servidor desde la carpeta donde se encuentran `main.py` e `index.html`:
 
    ```bash
    uvicorn main:app --reload
    ```
 
-6. Abre la aplicación en el navegador:
+5. Abre la aplicación en el navegador:
 
    **http://127.0.0.1:8000**
 
