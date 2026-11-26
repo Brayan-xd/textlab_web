@@ -11,7 +11,6 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
   <script>
-    // Configuración de tipografía y paleta editorial científica cálida
     tailwind.config = {
       theme: {
         extend: {
@@ -442,7 +441,6 @@
   </main>
 
   <script>
-    // Paleta científica cálida para clases dinámicas
     const PALETTE = ['#C2410C', '#1D4ED8', '#0F766E', '#B45309', '#4338CA', '#BE123C', '#3F6212'];
     let classChartInstance = null;
     const experimentsStore = {};
@@ -482,7 +480,6 @@
         tabs[key].className = `${active ? 'tab-active' : 'tab-inactive'} px-3.5 py-1.5 rounded-md border text-xs sm:text-sm font-semibold transition cursor-pointer`;
       });
 
-      // Redibujar gráfica de Chart.js si se entra a Evaluación
       if (tabName === 'evaluacion' && classChartInstance) {
         setTimeout(() => classChartInstance.resize(), 40);
       }
@@ -576,7 +573,6 @@
       }
     });
 
-    // Inspeccionar dataset mediante JSON a /api/inspect-dataset
     async function inspectDataset() {
       const payload = {
         text_col: document.getElementById('text-col').value,
@@ -691,7 +687,6 @@
       }
     }
 
-    // Renderizar métricas, gráfica por clase, matriz de confusión NxN y validación cruzada
     function renderResults(data) {
       document.getElementById('eval-title').textContent = `${data.id} · ${data.classifier} (${data.features})`;
       document.getElementById('eval-split-meta').textContent = `Train: ${data.train_samples} · Test: ${data.test_samples} · F1 Weighted: ${data.metrics.f1_weighted ?? '--'}%`;
